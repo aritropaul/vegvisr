@@ -13,8 +13,18 @@ import {
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v)
 
-const keyOf = (mode: number, palette: number, z: number, x: number, y: number) =>
-  `${mode}:${palette}:${z}/${x}/${y}`
+/** Cache key. The seed is part of it on purpose: `reset()` clears the cache on
+ *  every seed change, but keying by seed means a stale tile cannot be served
+ *  even if that ever stops happening. Tiles are the one thing here where being
+ *  wrong is silent — a mismatched tile just looks like terrain. */
+const keyOf = (
+  seed: number,
+  mode: number,
+  palette: number,
+  z: number,
+  x: number,
+  y: number,
+) => `${seed}:${mode}:${palette}:${z}/${x}/${y}`
 
 /** Snap to a 1/2/5 x 10^n ladder so grid lines land on round coordinates. */
 function niceStep(target: number): number {
@@ -483,7 +493,7 @@ export class MapView {
   }
 
   private key(z: number, x: number, y: number) {
-    return keyOf(this.mode, this.palette, z, x, y)
+    return keyOf(this.pool.seed, this.mode, this.palette, z, x, y)
   }
 
   /** Falls back through ancestors so something is always on screen. */
@@ -569,7 +579,9 @@ export class MapView {
           // same geometry, so switching never blanks the map.
           const prev =
             this.prevVariant &&
-            this.cache.get(keyOf(this.prevVariant[0], this.prevVariant[1], zi, tx, ty))
+            this.cache.get(
+              keyOf(this.pool.seed, this.prevVariant[0], this.prevVariant[1], zi, tx, ty),
+            )
           if (prev) ctx.drawImage(prev, dx, dy, drawn + 1, drawn + 1)
           else this.drawAncestor(zi, tx, ty, dx, dy, drawn + 1)
           const ccx = dx + drawn / 2 - w / 2

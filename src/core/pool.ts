@@ -88,14 +88,14 @@ export class TilePool {
       const r = res as InitRes
       this.seed = r.seed
       this.pregenMs = Math.max(this.pregenMs, r.ms)
-      this.idle.push(w)
+      this.markIdle(w)
       this.readyResolve?.()
       this.pump()
       return
     }
     if (res.type === 'search') {
       const r = res as SearchRes
-      this.idle.push(w)
+      this.markIdle(w)
       if (this.search) {
         this.search.inFlight--
         this.search.scanned += r.count
@@ -110,7 +110,7 @@ export class TilePool {
     const t = res as TileRes
     const job = this.busyBy.get(w)
     this.busyBy.delete(w)
-    this.idle.push(w)
+    this.markIdle(w)
     this.pending.delete(t.id)
 
     if (job && !this.cancelled.has(t.id)) {
@@ -158,6 +158,25 @@ export class TilePool {
     for (const job of this.busyBy.values()) {
       if (!keep.has(job.req.id)) this.cancelled.add(job.req.id)
     }
+  }
+
+  /**
+   * Return a worker to the idle list, at most once.
+   *
+   * `busyBy` is worker-keyed — one job per worker — so a worker sitting in
+   * `idle` twice gets handed two jobs, the second `busyBy.set` overwrites the
+   * first, and the first response then resolves the *second* job's promise.
+   * The bitmap lands under the wrong tile key and the map draws a patchwork of
+   * correct-looking tiles in the wrong places.
+   *
+   * Duplicates were reachable two ways. `init()` clears `idle` and `busyBy`
+   * while work is still in flight, so a worker finishing an old tile pushes
+   * itself back, then pushes again when it answers the new `init`. Seed search
+   * added a third push site and made it routine.
+   */
+  private markIdle(w: Worker) {
+    if (this.busyBy.has(w) || this.idle.includes(w)) return
+    this.idle.push(w)
   }
 
   private pump() {
