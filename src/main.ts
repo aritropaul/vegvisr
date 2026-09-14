@@ -23,11 +23,13 @@ import { Terrain3D } from './render/terrain3d'
  *
  * `VersionSetup` in the game only branches on `<= 0` and `<= 1`, so every
  * build from the Mistlands update onward behaves identically as far as terrain
- * is concerned. That is why there is no separate 1.0 entry here: see the
- * README's limitations for what is and is not verified about 1.0.
+ * is concerned — and 1.0 did **not** bump it. valheim-map.world's live code
+ * tags 1.0.7 as world version 2, and kirilloid/valheim bumped every adjacent
+ * save-format constant for 1.0 while leaving WORLD_GEN at 2. So there is no
+ * separate 1.0 entry here because v2 *is* 1.0.
  */
 const GEN_VERSIONS: Array<{ v: number; label: string; note?: string }> = [
-  { v: 2, label: 'v2 · current', note: 'Mistlands (0.212) onward, including 1.0' },
+  { v: 2, label: 'v2 · current', note: 'Mistlands (0.212.7, Dec 2022) through 1.0 — verified unchanged in 1.0.7' },
   { v: 1, label: 'v1 · pre-Mistlands', note: 'Wider marsh band, higher Mistlands threshold' },
   { v: 0, label: 'v0 · earliest', note: 'Mountains held 1500 m from spawn' },
 ]

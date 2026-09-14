@@ -64,6 +64,7 @@ manifest in September 2026, not taken from its documentation.
 | | valheim-map.world | Vegvisr |
 |---|---|---|
 | Engine | Unity 2019 WebGL | Rust → WebAssembly |
+| Valheim 1.0 | yes, beta since 2026-09-11 | yes — world version 2, location table from a live 1.0.7 dump |
 | Download | **12.5 MB** <sup>1</sup> | **216 KB** (86 KB gzipped) |
 | Threads | **1** <sup>2</sup> | `~60% of cores` |
 | Revisiting a seed | regenerates | **generates nothing** <sup>3</sup> |
@@ -374,16 +375,47 @@ None of these is visible in a screenshot. All of them move biome boundaries.
 
 These are real and worth stating plainly.
 
-1. **Targets pre-1.0 world generation (`m_worldGenVersion = 2`).** The terrain
-   math here is transcribed from a decompile of **0.218.15** — the Ashlands
-   release. Valheim 1.0 shipped 2026-09-09 as the Deep North update and bumped
-   the world version; no 1.0 decompile is public yet. The location table *has*
-   been checked against 1.0.7 (see below) and matches, and the core terrain
-   functions were byte-stable across every build from 0.216.5 to 0.221.12, so
-   1.0 terrain is likely still correct — but "likely" is not "verified".
-2. **Deep North terrain is the pre-1.0 shape.** Its ocean gap and biome
-   placement are exact, but 1.0 turned Deep North from a placeholder band into
-   finished content, and that work postdates the decompile available here.
+1. **1.0 works, but its terrain is evidenced rather than byte-verified.**
+   The terrain math is transcribed from decompiles of 0.218.15 and 0.221.4.
+   **Valheim 1.0 did not bump the world-generation version** — it is still 2,
+   so v2 *is* 1.0's ruleset. Two independent sources agree, both checked
+   directly rather than taken on report:
+
+   - valheim-map.world's live production code tags `1.0.7` as `WorldVer: 2`,
+     the same value as every build back to Mistlands (Dec 2022), and its `.fwl`
+     parser still treats `worldGenerationVersion == 2` as current.
+   - `kirilloid/valheim`, a TypeScript reimplementation that mirrors the game's
+     version constants, bumped `WORLD` 40 → 41, `PLAYER` 45 → 46 and
+     `INVENTORY` 108 → 109 for 1.0 in one commit — and left `WORLD_GEN = 2`
+     untouched.
+
+   The 1.0 patch notes' only world-generation line is *"Optimized world
+   generation to be much faster"*, filed under performance. And the location
+   table matches a live 1.0.7 dump exactly. Nobody has published a 1.0
+   decompile, so none of this is byte-level proof. Two specific things would
+   be worth checking if a 1.0 dump ever appears:
+
+   - **`GetBiomeHeight` gained a sixth parameter in 1.0.** Pre-1.0 it is
+     `(biome, wx, wy, out Color mask, bool preGeneration = false)`; a mod fixed
+     for 1.0 calls it with six arguments. What that parameter does, and whether
+     it changes output at the default, is unknown.
+   - **1.0 moved from Unity 2019 to Unity 6.** Everything here rests on
+     `Mathf.PerlinNoise` being unchanged. It has been stable for a decade and
+     our implementation matches 176 captured values, but those were captured
+     from the older engine.
+
+   Against that: the Deep North and Ashlands height functions are
+   Harmony-patched by name and by IL transpiler in a world-generation mod whose
+   1.0 fix did not touch those patches — good evidence their shape survived.
+
+2. **Deep North terrain is the pre-1.0 shape, and probably correct.** Its ocean
+   gap and biome placement come from the same verified path as everything else,
+   and the evidence above says 1.0 layered content — locations, creatures, gear
+   — over a band the generator already produced, rather than rewriting the
+   height function. The one observable consequence here is that `DN_Bossroom`
+   wants ground at 80 m altitude and finds none, so the Deep North boss does
+   not place. That is pinned by a test rather than hidden.
+
 3. **Vegetation — trees, ore, berries — is not generated.** The algorithm is
    now known: `ZoneSystem.PlaceVegetation` seeds per zone and prefab with
    `InitState(seed + zoneID.x * 4271 + zoneID.y * 9187 + hash(prefabName))`,
