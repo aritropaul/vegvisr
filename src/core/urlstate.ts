@@ -22,6 +22,9 @@ export interface ViewState {
   grid: boolean
   /** Enabled marker categories, as a bitmask over `POI_KINDS` ids. */
   markers: number
+  /** World-generation ruleset. A seed only reproduces under the version the
+   *  world was created with, so a shared link has to carry it. */
+  gen: number
 }
 
 const round = (v: number, dp: number) => {
@@ -41,6 +44,7 @@ export function encode(s: ViewState): URLSearchParams {
   if (s.three) p.set('v', '3d')
   if (!s.grid) p.set('g', '0')
   if (s.markers !== defaultMarkers()) p.set('k', s.markers.toString(36))
+  if (s.gen !== 2) p.set('wgv', String(s.gen))
   return p
 }
 
@@ -80,6 +84,7 @@ export function decode(search: string, fallbackSeed: string): ViewState {
     three: p.get('v') === '3d',
     grid: p.get('g') !== '0',
     markers: Number.isFinite(markers) ? markers : defaultMarkers(),
+    gen: num('wgv', 2),
   }
 }
 

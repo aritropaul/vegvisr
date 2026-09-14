@@ -12,7 +12,7 @@
 
 use crate::geo::{Biome, WorldGenerator};
 use crate::random::{stable_hash_code, UnityRandom};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub const ZONE_SIZE: f32 = 64.0;
 const WATER_LEVEL: f32 = 30.0;

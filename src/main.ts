@@ -12,7 +12,27 @@ import {
 import { MapView, glyph } from './render/map'
 import { Terrain3D } from './render/terrain3d'
 
-const WORLD_GEN_VERSION = 2
+/**
+ * World-generation rulesets Valheim has shipped, newest first.
+ *
+ * A world stores the version it was *created* under in its `.fwl` and keeps it
+ * forever, so a seed only reproduces if you generate it under the same rules.
+ * The differences are small but they move biome boundaries: v0 pushes
+ * mountains 1500 m from spawn instead of 1000, and v0/v1 widen the marsh band
+ * to 8000 m and raise the Mistlands noise threshold to 0.5.
+ *
+ * `VersionSetup` in the game only branches on `<= 0` and `<= 1`, so every
+ * build from the Mistlands update onward behaves identically as far as terrain
+ * is concerned. That is why there is no separate 1.0 entry here: see the
+ * README's limitations for what is and is not verified about 1.0.
+ */
+const GEN_VERSIONS: Array<{ v: number; label: string; note?: string }> = [
+  { v: 2, label: 'v2 · current', note: 'Mistlands (0.212) onward, including 1.0' },
+  { v: 1, label: 'v1 · pre-Mistlands', note: 'Wider marsh band, higher Mistlands threshold' },
+  { v: 0, label: 'v0 · earliest', note: 'Mountains held 1500 m from spawn' },
+]
+const DEFAULT_GEN_VERSION = 2
+let worldGenVersion = DEFAULT_GEN_VERSION
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T
 const canvas = $<HTMLCanvasElement>('#map')
@@ -331,8 +351,8 @@ async function generate(seedName: string) {
   view.reset()
   bootFill.style.width = '46%'
   await Promise.all([
-    pool.init(seedName, WORLD_GEN_VERSION),
-    queryWorker.init(seedName, WORLD_GEN_VERSION),
+    pool.init(seedName, worldGenVersion),
+    queryWorker.init(seedName, worldGenVersion),
   ])
 
   bootFill.style.width = '82%'
@@ -855,16 +875,21 @@ window.addEventListener('drop', async (e) => {
   try {
     const w = parseFwl(await file.arrayBuffer())
     seedInput.value = w.seedName
-    await generate(w.seedName)
-    // The generator here targets worldGenVersion 2; say so plainly rather than
-    // silently rendering a map for rules the world was not built with.
+    // Generate under the rules the world was actually created with, rather
+    // than rendering the default and hoping they match. This is the whole
+    // reason the file is worth reading beyond the seed.
+    const known = GEN_VERSIONS.some((g) => g.v === w.worldGenVersion)
+    setGenVersion(known ? w.worldGenVersion : DEFAULT_GEN_VERSION)
     const warn = $<HTMLElement>('#genWarn')
-    if (w.worldGenVersion !== WORLD_GEN_VERSION) {
+    warn.hidden = known
+    if (!known) {
       warn.textContent = `WORLD v${w.worldGenVersion}`
       warn.title =
-        `"${w.name}" was created with worldGenVersion ${w.worldGenVersion}; ` +
-        `this tool generates version ${WORLD_GEN_VERSION}. Terrain may differ.`
+        `"${w.name}" records worldGenVersion ${w.worldGenVersion}, which this ` +
+        `tool does not implement. Generated as v${DEFAULT_GEN_VERSION} instead; ` +
+        `terrain may differ.`
     }
+    await generate(w.seedName)
     bootText.textContent = `LOADED ${w.name}`
   } catch (err) {
     bootText.textContent = 'COULD NOT READ THAT WORLD FILE'
@@ -872,6 +897,25 @@ window.addEventListener('drop', async (e) => {
   }
 })
 
+
+
+// ── world-generation version ──────────────────────────────────────────────
+const genVerEl = $<HTMLSelectElement>('#genVer')
+genVerEl.innerHTML = GEN_VERSIONS.map(
+  (g) => `<option value="${g.v}" title="${g.note ?? ''}">${g.label}</option>`,
+).join('')
+
+function setGenVersion(v: number) {
+  worldGenVersion = v
+  genVerEl.value = String(v)
+}
+
+genVerEl.addEventListener('change', () => {
+  setGenVersion(Number(genVerEl.value))
+  $<HTMLElement>('#genWarn').hidden = true
+  syncUrl()
+  void generate(seedInput.value.trim())
+})
 
 // ── seed search ───────────────────────────────────────────────────────────
 // Biomes people actually plan a start around. Ashlands and Deep North are
@@ -989,6 +1033,7 @@ function syncUrlNow() {
     three: is3D,
     grid: view.showGrid,
     markers,
+    gen: worldGenVersion,
   })
 }
 
@@ -1032,6 +1077,7 @@ function applyState(st: ViewState) {
 
 const boot = decodeUrl(location.search, seedInput.value.trim())
 seedInput.value = boot.seed
+setGenVersion(GEN_VERSIONS.some((g) => g.v === boot.gen) ? boot.gen : DEFAULT_GEN_VERSION)
 view.fit()
 applyState(boot)
 void generate(boot.seed).then(() => {

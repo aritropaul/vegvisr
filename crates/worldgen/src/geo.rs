@@ -148,10 +148,18 @@ pub struct WorldGenerator {
     min_darkland_noise: f32,
 
     pub rivers: Rivers,
-    /// Cellular/simplex source for Ashlands terrain. The game holds this in a
-    /// `static` guarded by a null check, so in-game it keeps the seed of the
-    /// first world loaded that session; one instance per generator reproduces
-    /// the intended (and overwhelmingly common) single-world case.
+    /// Cellular/simplex source for Ashlands terrain.
+    ///
+    /// Seeded **0, not the world seed**. The game constructs it as
+    /// `new FastNoise(m_world.m_seed)` and then immediately calls
+    /// `m_noiseGen.SetSeed(0)`, so the constructor argument never survives.
+    /// Ashlands' fine terrain is therefore the same cellular pattern in every
+    /// world; only `base_height` and `offset3` vary per seed.
+    ///
+    /// That `SetSeed(0)` is also what fixes a real bug in the game: the
+    /// generator is a `static` guarded by a null check, so without it an
+    /// instance would keep the seed of whichever world was loaded first that
+    /// session. It appears in 0.221.4 but not in 0.218.15.
     pub noise: FastNoise,
 }
 
@@ -211,7 +219,7 @@ impl WorldGenerator {
             max_marsh_distance,
             min_darkland_noise,
             rivers: Rivers::empty(),
-            noise: FastNoise::new(seed),
+            noise: FastNoise::new(0),
         };
         if pregenerate {
             wg.pregenerate();

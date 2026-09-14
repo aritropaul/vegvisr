@@ -121,6 +121,13 @@ html, body {
 .hit-row:hover { background: rgba(120, 180, 255, .09); }
 .hit-row b { font-weight: 400; color: var(--fg2, #8ea0b5); font-variant-numeric: tabular-nums; }
 
+#genVer {
+  background: transparent; color: var(--fg, #cfe3f5); border: 1px solid rgba(120,150,190,.28);
+  font: 10px/1 ui-monospace, monospace; letter-spacing: .06em; padding: 2px 4px; cursor: pointer;
+}
+#genVer:focus { outline: 1px solid var(--amber, #e8c07a); }
+.warn[hidden] { display: none; }
+
 .tc { top: 14px; left: 50%; transform: translateX(-50%); width: 320px; }
 #find {
   width: 100%; background: transparent; border: 0; outline: 0;
