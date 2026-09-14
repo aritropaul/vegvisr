@@ -38,6 +38,9 @@ export interface HistReq {
 export interface LocReq {
   type: 'locations'
   id: number
+  /** Bitmask over `POI_KINDS` ids. Only these categories come back; placement
+   *  still runs for all of them, because types compete for the same zones. */
+  kinds: number
 }
 
 export interface TerrainReq {
@@ -121,6 +124,8 @@ export interface LocProgressRes {
 export interface LocRes {
   type: 'locations'
   id: number
+  /** Per-category totals for every category, including unfetched ones. */
+  counts: number[]
   /** Flattened [kind, cfgIndex, x, y, reachable] per entry. */
   data: Float32Array
   table: string

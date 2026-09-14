@@ -1,10 +1,28 @@
 import type { InitRes, Req, Res, SearchHit, SearchRes, TileRes } from './protocol'
 
+const clampInt = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v)
+
 type TileMsg = Extract<Req, { type: 'tile' }>
 
 /** Candidates per batch. ~1 s of work: small enough that stopping feels
  *  immediate, large enough that postMessage overhead is noise. */
 const SEARCH_BATCH = 8
+
+/**
+ * How many workers a search may occupy at once.
+ *
+ * Deliberately a small fixed number rather than "every idle worker". Search is
+ * a background convenience, and the first version handed a batch to every
+ * worker in the pool — on a 10-core machine that is ten cores pinned at 100%
+ * for as long as the search runs, which turns a map viewer into a space
+ * heater. Two workers still scan a few seeds a second, which is fast enough
+ * that hits arrive while you watch.
+ */
+const SEARCH_WORKERS = 2
+
+/** Give up after this long. A search nobody is watching should not run for
+ *  the life of the tab. */
+const SEARCH_MAX_MS = 4 * 60 * 1000
 
 interface Job {
   req: TileMsg
@@ -35,6 +53,7 @@ export class TilePool {
     next: number
     scanned: number
     inFlight: number
+    started: number
     params: Omit<Extract<Req, { type: 'search' }>, 'type' | 'start' | 'count'>
     onHit: (h: SearchHit[], scanned: number) => void
   } | null = null
@@ -43,7 +62,16 @@ export class TilePool {
   seed = 0
   pregenMs = 0
 
-  constructor(size = Math.max(2, (navigator.hardwareConcurrency || 4) - 1)) {
+  /**
+   * Leave the machine usable. `cores - 1` maximises throughput and means every
+   * pan pins the whole CPU, because each worker is generating terrain from
+   * noise rather than fetching a pre-baked tile. Two thirds is barely slower
+   * in practice — tiles already arrive faster than they can be looked at — and
+   * it stops the fans.
+   */
+  constructor(
+    size = clampInt(Math.round((navigator.hardwareConcurrency || 4) * 0.6), 2, 6),
+  ) {
     this.size = size
     for (let i = 0; i < size; i++) {
       const w = new Worker(new URL('../workers/tile.worker.ts', import.meta.url), {
@@ -100,7 +128,9 @@ export class TilePool {
         this.search.inFlight--
         this.search.scanned += r.count
         const hits = JSON.parse(r.hits) as SearchHit[]
+        const elapsed = performance.now() - this.search.started
         this.search.onHit(hits, this.search.scanned)
+        if (elapsed > SEARCH_MAX_MS) this.stopSearch()
       }
       this.pump()
       return
@@ -188,8 +218,15 @@ export class TilePool {
     }
     // Only feed the search once every tile is placed, so a search never makes
     // the map feel slow. A batch is ~1 s, which bounds how long a tile can be
-    // stuck behind one.
-    while (this.search && this.idle.length && !this.queue.length) {
+    // stuck behind one. Capped at SEARCH_WORKERS so it leaves the machine
+    // usable, and paused entirely while the tab is in the background.
+    while (
+      this.search &&
+      this.search.inFlight < SEARCH_WORKERS &&
+      !document.hidden &&
+      this.idle.length &&
+      !this.queue.length
+    ) {
       const w = this.idle.pop()!
       const s = this.search
       const req: Req = { type: 'search', start: s.next, count: SEARCH_BATCH, ...s.params }
@@ -203,12 +240,19 @@ export class TilePool {
     params: Omit<Extract<Req, { type: 'search' }>, 'type' | 'start' | 'count'>,
     onHit: (hits: SearchHit[], scanned: number) => void,
   ) {
-    this.search = { next: 0, scanned: 0, inFlight: 0, params, onHit }
+    this.search = { next: 0, scanned: 0, inFlight: 0, started: performance.now(), params, onHit }
+    // Resume when the tab comes back; pump() refuses to dispatch while hidden.
+    document.addEventListener('visibilitychange', this.onVisibility)
     this.pump()
+  }
+
+  private onVisibility = () => {
+    if (!document.hidden) this.pump()
   }
 
   stopSearch() {
     this.search = null
+    document.removeEventListener('visibilitychange', this.onVisibility)
   }
 
   get searching(): boolean {

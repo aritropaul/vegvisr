@@ -25,15 +25,27 @@ export class World {
      */
     heights_grid(ox: number, oy: number, span: number, nx: number, ny: number): Float32Array;
     /**
-     * All placed locations, flattened as [kind, cfgIndex, x, y, reachable]
-     * per entry. One call rather than tens of thousands of boundary crossings.
-     * `reachable` is 1 when the site shares the spawn landmass.
+     * Per-category counts, so the UI can show totals for categories it has
+     * not fetched. 15 numbers instead of 12 000 records.
      */
-    locations(): Float32Array;
+    location_counts(): Uint32Array;
+    /**
+     * Placed locations whose `Kind` is set in `kind_mask`, flattened as
+     * [kind, cfgIndex, x, y, reachable] per entry. `reachable` is 1 when the
+     * site shares the spawn landmass.
+     *
+     * Filtering here rather than in JS matters: a world holds ~12 000 sites
+     * but only a few hundred are ever switched on, and shipping the rest
+     * across the boundary costs a 240 KB copy plus the spatial index built
+     * over it. Placement itself still runs for every type — it cannot be
+     * filtered, because all types compete for the same 64 m zones and
+     * skipping one moves every location placed after it.
+     */
+    locations_of(kind_mask: number): Float32Array;
     /**
      * Everything placed so far, in the same layout as `locations()`.
      */
-    locations_snapshot(): Float32Array;
+    locations_snapshot(kind_mask: number): Float32Array;
     /**
      * Places the next `types` location types and returns progress in 0..1.
      * Placement is strictly sequential — one shared occupancy map, prioritised
@@ -98,8 +110,9 @@ export interface InitOutput {
     readonly world_biome_histogram: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly world_height_at: (a: number, b: number, c: number) => number;
     readonly world_heights_grid: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
-    readonly world_locations: (a: number) => [number, number];
-    readonly world_locations_snapshot: (a: number) => [number, number];
+    readonly world_location_counts: (a: number) => [number, number];
+    readonly world_locations_of: (a: number, b: number) => [number, number];
+    readonly world_locations_snapshot: (a: number, b: number) => [number, number];
     readonly world_locations_step: (a: number, b: number) => number;
     readonly world_new: (a: number, b: number, c: number) => number;
     readonly world_render_tile: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;

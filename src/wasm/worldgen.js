@@ -66,23 +66,43 @@ export class World {
         return v1;
     }
     /**
-     * All placed locations, flattened as [kind, cfgIndex, x, y, reachable]
-     * per entry. One call rather than tens of thousands of boundary crossings.
-     * `reachable` is 1 when the site shares the spawn landmass.
+     * Per-category counts, so the UI can show totals for categories it has
+     * not fetched. 15 numbers instead of 12 000 records.
+     * @returns {Uint32Array}
+     */
+    location_counts() {
+        const ret = wasm.world_location_counts(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Placed locations whose `Kind` is set in `kind_mask`, flattened as
+     * [kind, cfgIndex, x, y, reachable] per entry. `reachable` is 1 when the
+     * site shares the spawn landmass.
+     *
+     * Filtering here rather than in JS matters: a world holds ~12 000 sites
+     * but only a few hundred are ever switched on, and shipping the rest
+     * across the boundary costs a 240 KB copy plus the spatial index built
+     * over it. Placement itself still runs for every type — it cannot be
+     * filtered, because all types compete for the same 64 m zones and
+     * skipping one moves every location placed after it.
+     * @param {number} kind_mask
      * @returns {Float32Array}
      */
-    locations() {
-        const ret = wasm.world_locations(this.__wbg_ptr);
+    locations_of(kind_mask) {
+        const ret = wasm.world_locations_of(this.__wbg_ptr, kind_mask);
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
     }
     /**
      * Everything placed so far, in the same layout as `locations()`.
+     * @param {number} kind_mask
      * @returns {Float32Array}
      */
-    locations_snapshot() {
-        const ret = wasm.world_locations_snapshot(this.__wbg_ptr);
+    locations_snapshot(kind_mask) {
+        const ret = wasm.world_locations_snapshot(this.__wbg_ptr, kind_mask);
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;

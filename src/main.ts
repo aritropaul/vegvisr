@@ -1,7 +1,7 @@
 import { TilePool } from './core/pool'
 import { QueryWorker } from './core/query'
 import { BIOME_NAMES, BIOME_ORDER, POI_KINDS, WATER_LEVEL, WORLD_EXTENT } from './core/protocol'
-import type { SeedReport } from './core/protocol'
+import type { Poi, SeedReport } from './core/protocol'
 import { parseFwl } from './core/fwl'
 import {
   decode as decodeUrl,
@@ -105,6 +105,54 @@ function paintReport(r: SeedReport) {
   }
 }
 
+
+// ── marker loading ────────────────────────────────────────────────────────
+// Placement runs for all 183 location types no matter what — they compete for
+// the same 64 m zones, so skipping one moves everything placed after it. What
+// *is* skippable is shipping the result: a world holds ~12 000 sites and the
+// default view shows 58. Categories are fetched the first time they are
+// switched on, and the worker keeps the placement so later fetches are free.
+const poisByKind = new Map<number, Poi[]>()
+let poiLabelTable: Array<{ label: string; kind: number }> = []
+let poiCounts: number[] = []
+
+const kindMask = (kinds: Iterable<number>) => {
+  let m = 0
+  for (const k of kinds) m |= 1 << k
+  return m
+}
+
+function rebuildPois(table = poiLabelTable) {
+  const all: Poi[] = []
+  for (const k of view.poiEnabled) {
+    const list = poisByKind.get(k)
+    if (list) all.push(...list)
+  }
+  view.setPois(all, table)
+  paintPoiCounts()
+}
+
+async function ensureKindLoaded(kind: number) {
+  // Already fetched: just put it back in the drawn set. Returning early
+  // without rebuilding leaves the category switched on but invisible.
+  if (poisByKind.has(kind)) {
+    rebuildPois()
+    return
+  }
+  const run = generation
+  poiStatusEl.hidden = false
+  poiStatusEl.textContent = `LOADING ${POI_KINDS[kind]?.name ?? 'MARKERS'}`
+  try {
+    const { pois, table } = await queryWorker.locations(1 << kind)
+    if (run !== generation) return
+    poiLabelTable = table
+    poisByKind.set(kind, pois)
+    rebuildPois(table)
+  } finally {
+    if (run === generation) poiStatusEl.hidden = true
+  }
+}
+
 // ── marker toggles ────────────────────────────────────────────────────────
 const poiListEl = $<HTMLDivElement>('#poiList')
 poiListEl.innerHTML = POI_KINDS.map(
@@ -120,17 +168,24 @@ for (const btn of poiListEl.querySelectorAll<HTMLButtonElement>('.poi')) {
     const on = !btn.classList.contains('on')
     btn.classList.toggle('on', on)
     view.togglePoi(kind, on)
+    if (on) void ensureKindLoaded(kind)
+    else rebuildPois()
   })
 }
 
 function paintPoiCounts() {
-  const counts = new Map<number, number>()
-  for (const p of view.pois) counts.set(p.kind, (counts.get(p.kind) ?? 0) + 1)
+  // Totals come from the worker so a category that has never been fetched
+  // still shows how many sites it holds.
+  const live = new Map<number, number>()
+  for (const p of view.pois) live.set(p.kind, (live.get(p.kind) ?? 0) + 1)
+  let total = 0
   for (const btn of poiListEl.querySelectorAll<HTMLButtonElement>('.poi')) {
     const kind = Number(btn.dataset.kind)
-    btn.querySelector('b')!.textContent = String(counts.get(kind) ?? 0)
+    const n = poiCounts[kind] ?? live.get(kind) ?? 0
+    total += n
+    btn.querySelector('b')!.textContent = String(n)
   }
-  $('#poiTotal').textContent = String(view.pois.length)
+  $('#poiTotal').textContent = String(total || view.pois.length)
 }
 
 // Hovering a marker surfaces its identity in telemetry.
@@ -296,6 +351,8 @@ async function generate(seedName: string) {
   // map — hostage behind it. It is not needed to draw terrain, so it now lands
   // whenever it lands. `run` guards against a second seed overtaking the first.
   const run = ++generation
+  poisByKind.clear()
+  poiCounts = []
   poiStatusEl.hidden = false
   poiStatusEl.textContent = 'PLACING LOCATIONS · 0%'
   queryWorker.onLocationProgress = (progress, partial, table) => {
@@ -305,18 +362,23 @@ async function generate(seedName: string) {
     // the start temple — so the useful markers appear seconds before the
     // long tail of ruins and monuments finishes.
     if (partial) {
-      view.setPois(partial, table ?? view.poiLabels)
-      paintPoiCounts()
+      for (const k of view.poiEnabled) poisByKind.set(k, [])
+      for (const p of partial) poisByKind.get(p.kind)?.push(p)
+      rebuildPois(table ?? view.poiLabels)
     }
   }
   queryWorker
-    .locations()
-    .then(({ pois, table, report }) => {
+    .locations(kindMask(view.poiEnabled))
+    .then(({ pois, table, report, counts }) => {
       // A newer seed has overtaken this one: drop the results, but do NOT
       // leave the banner up — the newer run owns it and will clear it itself.
       if (run !== generation) return
-      view.setPois(pois, table)
-      paintPoiCounts()
+      poiLabelTable = table
+      poiCounts = counts
+      poisByKind.clear()
+      for (const k of view.poiEnabled) poisByKind.set(k, [])
+      for (const p of pois) poisByKind.get(p.kind)?.push(p)
+      rebuildPois(table)
       paintReport(report)
       poiStatusEl.hidden = true
     })
@@ -888,6 +950,12 @@ function setSearching(on: boolean) {
     (hits, scanned) => {
       const rate = scanned / ((performance.now() - searchStart) / 1000)
       findStat.textContent = `${scanned} SCANNED · ${rate.toFixed(0)}/S`
+      // The pool stops itself after a time budget; keep the button honest.
+      if (!pool.searching) {
+        searchBtn.classList.remove('active')
+        searchBtn.textContent = 'SEARCH'
+        findStat.textContent = `${scanned} SCANNED · STOPPED`
+      }
       for (const h of hits) {
         const row = document.createElement('button')
         row.className = 'hit-row'

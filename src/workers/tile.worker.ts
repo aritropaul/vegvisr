@@ -72,17 +72,21 @@ self.onmessage = async (e: MessageEvent<Req>) => {
       progress = world.locations_step(8)
       const milestone = !sentEarly && progress >= 0.12
       if (milestone) sentEarly = true
-      const data = milestone ? world.locations_snapshot() : undefined
+      const data = milestone ? world.locations_snapshot(msg.kinds) : undefined
       post(
         { type: 'locProgress', id: msg.id, progress, data, table: data ? locationTable() : undefined },
         data ? [data.buffer] : [],
       )
     }
-    const data = world.locations_snapshot()
-    // report() reuses the placement and connectivity the loop just built,
-    // so asking for it here costs nothing extra.
+    const data = world.locations_of(msg.kinds)
+    // report() and the counts reuse the placement and connectivity the loop
+    // just built, so asking for them here costs nothing extra.
     const report = world.report()
-    post({ type: 'locations', id: msg.id, data, table: locationTable(), report }, [data.buffer])
+    const counts = Array.from(world.location_counts())
+    post(
+      { type: 'locations', id: msg.id, data, table: locationTable(), report, counts },
+      [data.buffer],
+    )
     return
   }
 

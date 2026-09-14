@@ -13,6 +13,19 @@ import {
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v)
 
+/** Backing-store resolution ceiling.
+ *
+ *  Deliberately NOT a reduction. Sub-metre terrain and hairline contours are
+ *  the whole point of this renderer, and dropping the buffer below the display
+ *  throws that away to save work — the wrong trade. The cap exists only to
+ *  bound pathological devicePixelRatio values. CPU is recovered from the pool
+ *  size, the marker index and lazy marker loading instead. */
+const MAX_DPR = 3
+
+/** World metres per bucket in the marker index. ~40x40 buckets over the world,
+ *  which puts a handful of markers in each. */
+const POI_CELL = 512
+
 /** Cache key. The seed is part of it on purpose: `reset()` clears the cache on
  *  every seed change, but keying by seed means a stale tile cannot be served
  *  even if that ever stops happening. Tiles are the one thing here where being
@@ -230,7 +243,7 @@ export class MapView {
   }
 
   private resize() {
-    this.dpr = window.devicePixelRatio || 1
+    this.dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR)
     const r = this.canvas.getBoundingClientRect()
     this.canvas.width = Math.round(r.width * this.dpr)
     this.canvas.height = Math.round(r.height * this.dpr)
@@ -427,7 +440,27 @@ export class MapView {
   setPois(pois: Poi[], labels: Array<{ label: string; kind: number }>) {
     this.pois = pois
     this.poiLabels = labels
+    // Bucket markers by world position. Hit-testing used to scan all of them
+    // on every pointermove — 1.9 ms per move once the table grew to 12 000
+    // sites, on top of a full redraw, which is most of a core just to know
+    // whether the cursor is over a marker.
+    this.poiIndex.clear()
+    for (const p of pois) {
+      const k = this.poiBucket(p.x, p.y)
+      const b = this.poiIndex.get(k)
+      if (b) b.push(p)
+      else this.poiIndex.set(k, [p])
+    }
     this.invalidate()
+  }
+
+  private poiIndex = new Map<number, Poi[]>()
+
+  private poiBucket(wx: number, wy: number): number {
+    const cx = Math.floor(wx / POI_CELL)
+    const cy = Math.floor(wy / POI_CELL)
+    // Pack two signed cell coords into one integer key.
+    return ((cx + 1024) << 12) | (cy + 1024)
   }
 
   /** Enter ruler mode. Clicks add vertices until `endMeasure`. */
@@ -478,15 +511,30 @@ export class MapView {
     const R = 11
     let best: Poi | null = null
     let bestD = R * R
-    for (const p of this.pois) {
-      if (!this.poiEnabled.has(p.kind)) continue
-      const px = (p.x - this.cx) * scale + w / 2
-      const py = (this.cy - p.y) * scale + h / 2
-      if (px < -R || py < -R || px > w + R || py > h + R) continue
-      const d = (px - sx) ** 2 + (py - sy) ** 2
-      if (d < bestD) {
-        bestD = d
-        best = p
+
+    // Only look in the buckets the hit radius can reach. R is in screen pixels,
+    // so its world footprint grows as you zoom out — at world view that is a
+    // few hundred metres, still only a handful of buckets.
+    const [wx, wy] = this.screenToWorld(sx, sy)
+    const reach = R / scale
+    const c0 = Math.floor((wx - reach) / POI_CELL)
+    const c1 = Math.floor((wx + reach) / POI_CELL)
+    const r0 = Math.floor((wy - reach) / POI_CELL)
+    const r1 = Math.floor((wy + reach) / POI_CELL)
+    for (let cx = c0; cx <= c1; cx++) {
+      for (let cy = r0; cy <= r1; cy++) {
+        const bucket = this.poiIndex.get(((cx + 1024) << 12) | (cy + 1024))
+        if (!bucket) continue
+        for (const p of bucket) {
+          if (!this.poiEnabled.has(p.kind)) continue
+          const px = (p.x - this.cx) * scale + w / 2
+          const py = (this.cy - p.y) * scale + h / 2
+          const d = (px - sx) ** 2 + (py - sy) ** 2
+          if (d < bestD) {
+            bestD = d
+            best = p
+          }
+        }
       }
     }
     return best

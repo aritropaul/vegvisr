@@ -111,22 +111,24 @@ export class QueryWorker {
   }
 
   /** Runs the full location placement pass. One-time per seed. */
-  async locations(): Promise<{
+  async locations(kinds: number): Promise<{
     pois: Poi[]
     table: Array<{ label: string; kind: number }>
     report: SeedReport
+    counts: number[]
   }> {
     await this.ready
     const id = ++this.next
     const res = await new Promise<LocRes>((resolve) => {
       this.pendingLoc.set(id, resolve)
-      const req: Req = { type: 'locations', id }
+      const req: Req = { type: 'locations', id, kinds }
       this.worker.postMessage(req)
     })
     return {
       pois: decodePois(res.data),
       table: JSON.parse(res.table),
       report: JSON.parse(res.report),
+      counts: res.counts,
     }
   }
 

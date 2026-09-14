@@ -119,16 +119,26 @@ impl World {
 
 #[wasm_bindgen]
 impl World {
-    /// All placed locations, flattened as [kind, cfgIndex, x, y, reachable]
-    /// per entry. One call rather than tens of thousands of boundary crossings.
-    /// `reachable` is 1 when the site shares the spawn landmass.
-    pub fn locations(&mut self) -> Vec<f32> {
+    /// Placed locations whose `Kind` is set in `kind_mask`, flattened as
+    /// [kind, cfgIndex, x, y, reachable] per entry. `reachable` is 1 when the
+    /// site shares the spawn landmass.
+    ///
+    /// Filtering here rather than in JS matters: a world holds ~12 000 sites
+    /// but only a few hundred are ever switched on, and shipping the rest
+    /// across the boundary costs a 240 KB copy plus the spatial index built
+    /// over it. Placement itself still runs for every type — it cannot be
+    /// filtered, because all types compete for the same 64 m zones and
+    /// skipping one moves every location placed after it.
+    pub fn locations_of(&mut self, kind_mask: u32) -> Vec<f32> {
         self.ensure_placed();
         let lm = self.landmass.as_ref().unwrap();
         let placed = self.placed.as_ref().unwrap();
-        let mut out = Vec::with_capacity(placed.len() * 5);
+        let mut out = Vec::new();
         for p in placed {
             let cfg = &crate::locations::LOCATIONS[p.cfg];
+            if kind_mask & (1u32 << (cfg.kind as u8)) == 0 {
+                continue;
+            }
             out.push(cfg.kind as u8 as f32);
             out.push(p.cfg as f32);
             out.push(p.x);
@@ -136,6 +146,17 @@ impl World {
             out.push(if lm.nearest_land(p.x, p.y, 6) == lm.spawn { 1.0 } else { 0.0 });
         }
         out
+    }
+
+    /// Per-category counts, so the UI can show totals for categories it has
+    /// not fetched. 15 numbers instead of 12 000 records.
+    pub fn location_counts(&mut self) -> Vec<u32> {
+        self.ensure_placed();
+        let mut counts = vec![0u32; 16];
+        for p in self.placed.as_ref().unwrap() {
+            counts[crate::locations::LOCATIONS[p.cfg].kind as u8 as usize] += 1;
+        }
+        counts
     }
 
     /// The headline facts people actually quote when they share a seed, as
@@ -209,7 +230,7 @@ impl World {
     }
 
     /// Everything placed so far, in the same layout as `locations()`.
-    pub fn locations_snapshot(&mut self) -> Vec<f32> {
+    pub fn locations_snapshot(&mut self, kind_mask: u32) -> Vec<f32> {
         if self.landmass.is_none() {
             self.landmass = Some(crate::connect::build(&self.inner.wg));
         }
@@ -220,9 +241,12 @@ impl World {
             (None, Some(st)) => &st.placed,
             _ => &empty,
         };
-        let mut out = Vec::with_capacity(placed.len() * 5);
+        let mut out = Vec::new();
         for p in placed {
             let cfg = &crate::locations::LOCATIONS[p.cfg];
+            if kind_mask & (1u32 << (cfg.kind as u8)) == 0 {
+                continue;
+            }
             out.push(cfg.kind as u8 as f32);
             out.push(p.cfg as f32);
             out.push(p.x);
