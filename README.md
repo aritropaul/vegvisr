@@ -1,8 +1,13 @@
-# Valheim Seed Map
+# Vegvisr — Valheim Seed Map
+
+**[vegvisr.vercel.app](https://vegvisr.vercel.app)**
 
 A client-side Valheim world map explorer. Type a seed phrase, get the map.
 No backend, no upload, no queue — the entire world generator runs in your
 browser as WebAssembly across a pool of workers.
+
+Named for the *vegvísir*, the Norse wayfinder — and in Valheim, the runestone
+that reveals locations on your map.
 
 ```
 bun install

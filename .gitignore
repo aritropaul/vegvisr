@@ -7,3 +7,4 @@ crates/worldgen/target/
 
 # src/wasm/ is intentionally NOT ignored: it is the wasm-bindgen output, and
 # committing it means a deploy needs only `vite build`, not a Rust toolchain.
+.vercel
