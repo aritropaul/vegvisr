@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Valheim // Terrain Scope</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@300;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/ui/style.css" />
+  </head>
+  <body>
+    <canvas id="map"></canvas>
+    <canvas id="gl" hidden></canvas>
+    <canvas id="glOverlay" hidden></canvas>
+    <div class="vignette"></div>
+
+    <!-- ── seed / identity ─────────────────────────────────────────────── -->
+    <section class="panel tl" id="panelSeed">
+      <div class="phead"><span class="dot"></span>TERRAIN SCOPE<i>v1</i></div>
+      <div class="seedrow">
+        <input id="seed" type="text" spellcheck="false" autocomplete="off" value="j3QV2ftr3y" aria-label="Seed phrase" />
+        <button id="go" class="go">RUN</button>
+      </div>
+      <dl class="kv">
+        <dt>HASH</dt><dd id="seedInt">—</dd>
+        <dt>WORLDGEN</dt><dd>v2 <span class="warn" id="genWarn" title="Valheim 1.0 shipped 2026-09-09 and bumped the world-generation version. No 1.0 decompile is public yet; the pre-1.0 algorithm is used here.">PRE-1.0</span></dd>
+        <dt>RADIUS</dt><dd>10 000 m</dd>
+      </dl>
+    </section>
+
+    <!-- ── controls ────────────────────────────────────────────────────── -->
+    <section class="panel tr" id="panelCtl">
+      <div class="phead">RENDER</div>
+      <div class="segs" role="group" aria-label="Render mode">
+        <button data-mode="0" class="seg active">BIOME</button>
+        <button data-mode="1" class="seg">TERRAIN</button>
+      </div>
+      <div class="segs" role="group" aria-label="Palette">
+        <button data-palette="0" class="seg active">STD</button>
+        <button data-palette="1" class="seg" title="Hue and luminance separated for red-green colour blindness">A11Y</button>
+      </div>
+      <div class="segs" role="group" aria-label="Projection">
+        <button data-view="2d" class="seg active">2D</button>
+        <button data-view="3d" class="seg">3D</button>
+      </div>
+      <div class="segs">
+        <button id="gridBtn" class="seg active">GRID</button>
+        <button id="fit" class="seg">FIT</button>
+      </div>
+      <div class="segs">
+        <button id="rulerBtn" class="seg" title="Measure distance — click to add points, Esc to finish">RULER</button>
+        <button id="shareBtn" class="seg" title="Copy a link to this exact view">SHARE</button>
+      </div>
+      <div class="surf" id="surfStatus" hidden>BUILDING SURFACE</div>
+      <div class="hint" id="hint3d" hidden>
+        DRAG ORBIT · RIGHT/SHIFT-DRAG PAN<br />WASD FLY · WHEEL ZOOM · R RESET
+      </div>
+    </section>
+
+    <!-- ── markers ─────────────────────────────────────────────────────── -->
+    <section class="panel tc" id="panelFind">
+      <input id="find" type="text" spellcheck="false" autocomplete="off"
+             placeholder="FIND  —  name, or  x, y" aria-label="Find a location or coordinate" />
+      <div class="findlist" id="findList"></div>
+    </section>
+
+    <section class="panel bm" id="panelSearch">
+      <div class="phead">FIND A SEED<i id="findStat">—</i></div>
+      <div class="crit">
+        <span class="lbl">ON THE STARTING LANDMASS</span>
+        <div class="biomepick" id="biomePick"></div>
+        <label class="lbl area">MIN AREA
+          <input id="minArea" type="range" min="0" max="40" step="1" value="12" />
+          <b id="minAreaVal">12 km²</b>
+        </label>
+      </div>
+      <div class="segs">
+        <button id="searchBtn" class="seg">SEARCH</button>
+      </div>
+      <div class="hits" id="searchHits"></div>
+    </section>
+
+    <section class="panel tl2" id="panelReport">
+      <div class="phead">SEED REPORT<i id="repReach">—</i></div>
+      <dl class="kv">
+        <dt>HOME LANDMASS</dt><dd id="repArea">—</dd>
+        <dt>LARGEST</dt><dd id="repLargest">—</dd>
+        <dt>LANDMASSES</dt><dd id="repCount">—</dd>
+      </dl>
+      <div class="sites" id="repSites"></div>
+      <div class="note">&#10003; = reachable on foot from spawn</div>
+    </section>
+
+    <section class="panel tr2" id="panelPoi">
+      <div class="phead">MARKERS<i id="poiTotal">—</i></div>
+      <div class="poilist" id="poiList"></div>
+      <div class="surf" id="poiStatus" hidden>PLACING LOCATIONS</div>
+      <div class="note">Modelled from community-extracted placement data.</div>
+    </section>
+
+    <!-- ── world locator ───────────────────────────────────────────────── -->
+    <section class="panel lm" id="panelLoc">
+      <div class="phead">LOCATOR</div>
+      <canvas id="locator" width="146" height="146"></canvas>
+      <dl class="kv tight">
+        <dt>VIEW</dt><dd id="locSpan">—</dd>
+      </dl>
+    </section>
+
+    <!-- ── composition ─────────────────────────────────────────────────── -->
+    <section class="panel bl" id="panelComp">
+      <div class="phead">SURFACE COMPOSITION<i id="compScope">WORLD</i></div>
+      <div class="bars" id="bars"></div>
+    </section>
+
+    <!-- ── telemetry ───────────────────────────────────────────────────── -->
+    <section class="panel br" id="panelTel">
+      <div class="phead">TELEMETRY</div>
+      <dl class="kv big">
+        <dt>POS</dt><dd id="roPos">—</dd>
+        <dt>BIOME</dt><dd id="roBiome">—</dd>
+        <dt>ALT</dt><dd id="roAlt">—</dd>
+        <dt>RANGE</dt><dd id="roDist">—</dd>
+        <dt id="roRulerK" hidden>RULER</dt><dd id="roRuler" hidden>—</dd>
+      </dl>
+      <dl class="kv dim" id="surfRow">
+        <dt>PATCH</dt><dd id="surfSpan">—</dd>
+      </dl>
+      <div class="site" id="roSite" hidden></div>
+      <div class="hatch"></div>
+      <dl class="kv dim">
+        <dt>SCALE</dt><dd id="tScale">—</dd>
+        <dt>TILES</dt><dd id="tTiles">—</dd>
+        <dt>LAST</dt><dd id="tLast">—</dd>
+        <dt>WORKERS</dt><dd id="tWorkers">—</dd>
+      </dl>
+    </section>
+
+    <!-- ── boot ────────────────────────────────────────────────────────── -->
+    <div class="drophint" id="dropHint" hidden><span>DROP A <b>.fwl</b> WORLD FILE TO LOAD ITS SEED</span></div>
+
+    <div class="boot" id="boot">
+      <div class="bootbox">
+        <div class="bootbar"><i id="bootFill"></i></div>
+        <span id="bootText">INITIALISING</span>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

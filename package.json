@@ -1,0 +1,17 @@
+{
+  "name": "valheim-map",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "portless valheim vite",
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "build": "bun run build:wasm && vite build",
+    "preview": "portless valheim vite preview"
+  },
+  "devDependencies": {
+    "vite": "^7.1.0",
+    "typescript": "^5.7.0",
+    "vite-plugin-wasm": "^3.4.1",
+    "vite-plugin-top-level-await": "^1.4.4"
+  }
+}
