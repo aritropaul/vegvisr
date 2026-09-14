@@ -1,47 +1,134 @@
-# Vegvisr — Valheim Seed Map
+# Vegvisr
 
-**[vegvisr.vercel.app](https://vegvisr.vercel.app)**
+**[vegvisr.vercel.app](https://vegvisr.vercel.app)** — a Valheim seed map that
+runs entirely in your browser.
 
-A client-side Valheim world map explorer. Type a seed phrase, get the map.
-No backend, no upload, no queue — the entire world generator runs in your
-browser as WebAssembly across a pool of workers.
+Type a seed phrase and the whole world appears: biomes, terrain, rivers, and
+12 000 points of interest, down to 0.32 m per pixel. There is no backend, no
+upload step and no queue. Valheim's world generator is reimplemented in Rust,
+compiled to 62 KB of WebAssembly, and run across a pool of workers on your own
+machine.
 
 Named for the *vegvísir*, the Norse wayfinder — and in Valheim, the runestone
 that reveals locations on your map.
 
 ```
 bun install
-bun run build:wasm   # requires: rustup target add wasm32-unknown-unknown
-bun run dev          # -> https://valheim.lcl
+bun run build:wasm   # needs: rustup target add wasm32-unknown-unknown
+bun run dev
 ```
 
-## Why this is fast
+## What it does
 
-The established tool in this space (valheim-map.world) ships a ~12 MB
-**single-threaded Unity WebGL runtime** (`"multithreading": false`, per its own
-build manifest) and takes 10–60 s per seed with the tab frozen, topping out at
-8192² ≈ 2.44 m/px.
+- **2D map** — biome and terrain views, gradient biome borders, sea-level
+  contours, shaded relief.
+- **3D** — the same world as a displaced surface with a nested clipmap, so the
+  whole map stays on screen while the ground under the camera stays sharp.
+- **12 006 points of interest** across 183 location types, in 15 toggleable
+  categories: bosses, traders, crypts, runestones, drake nests, shipwrecks,
+  villages, and the rest.
+- **Seed report** — how big your starting landmass is and, for every boss and
+  trader, whether you can walk there or need a boat.
+- **Seed search** — scan for a seed by what is on its starting landmass.
+- **Ruler, search, permalinks** — measure a sailing route, jump to a location
+  by name or coordinate, share a link to an exact view.
+- **Drop a `.fwl`** world file to load its seed without retyping it.
 
-It does that because of a specific belief, stated on its about page: Unity's
-random primitives are *"proprietary to Unity and their source code is not
-released"*, so the only way to match the game is to run real Unity.
+## Why it is fast
 
-That premise is false. `UnityEngine.Random` is a xorshift128 with an MT19937-style
-seeding constant, and `Mathf.PerlinNoise` is Ken Perlin's 2002 improved noise with
-two Unity quirks. Both are reproduced here bit-for-bit and verified against
-captured Unity output. Removing the Unity dependency is what removes the server,
-the download, and the wait.
+The established tool in this space, [valheim-map.world][vmw], ships a Unity
+WebGL build. That is a deliberate choice, and its stated reason is a specific
+technical belief: that Unity's random primitives are *"proprietary to Unity and
+their source code is not released"*, so the only way to reproduce the game
+exactly is to run real Unity.
 
-| | valheim-map.world | this |
+That premise is false, and falsifying it is what this project is.
+`UnityEngine.Random` is a xorshift128 with an MT19937-style seeding constant,
+and `Mathf.PerlinNoise` is Ken Perlin's 2002 improved noise with two Unity
+quirks. Both are reproduced here bit-for-bit and verified against captured
+Unity output and against real Valheim save files. Removing the Unity dependency
+is what removes the 12 MB download, the single thread, and the wait.
+
+[vmw]: https://valheim-map.world
+
+## Compared with valheim-map.world
+
+valheim-map.world came first, is free, is donation-funded, and is the reason
+this community can look up a seed at all. It also does things this does not:
+collaborative lobbies with shared custom pins, full world-file upload, map
+image export, and a fog-of-war layer. If you want those, use it.
+
+Everything below was verified directly against the live site and its own build
+manifest in September 2026, not taken from its documentation.
+
+| | valheim-map.world | Vegvisr |
 |---|---|---|
-| Engine | Unity WebGL, ~12 MB | Rust → WASM, **52 KB** |
-| Threads | 1 | `hardwareConcurrency − 1` |
-| Time to first map | 10–60 s, tab frozen | ~1 s, progressive |
-| Max resolution | 2.44 m/px | **0.32 m/px** |
-| Backend | required for some flows | none |
+| Engine | Unity 2019 WebGL | Rust → WebAssembly |
+| Download | **12.5 MB** <sup>1</sup> | **216 KB** (86 KB gzipped) |
+| Threads | **1** <sup>2</sup> | `~60% of cores` |
+| Revisiting a seed | regenerates | **generates nothing** <sup>3</sup> |
+| Search by name | no | yes |
+| Measure distance | no | yes |
+| Landmass reachability | no | yes |
+| Seed search by criteria | no | yes |
+| Ore / vegetation | no <sup>4</sup> | no — [and why](#known-limitations) |
+| Collaborative pins | **yes** | no |
+| World-file upload | **yes**, full | seed only |
+| Map image export | **yes** | no |
 
-Measured on an M5 (native, single core): world pregeneration 135 ms, a 512²
-biome tile 16 ms, a 512² biome+height tile 38 ms.
+<sup>1</sup> `ReleaseProjectV97.data.unityweb` 6 395 404 B + `.wasm.code.unityweb`
+6 578 642 B + `.wasm.framework.unityweb` 94 275 B.
+<sup>2</sup> `"multithreading": false` in `Build/ReleaseProjectV97.json`.
+<sup>3</sup> Measured: a warm reload draws all 65 visible tiles from storage with
+zero worker renders.
+<sup>4</sup> Its about page gives the reason: "too computationally expensive for
+full-world calculation."
+
+## Performance
+
+Measured on an M5, seed `j3QV2ftr3y`.
+
+**Rust, native, single core**
+
+| | |
+|---|---|
+| World pregeneration (lakes, rivers, streams) | 156 ms |
+| 256² biome tile | 16.2 ms |
+| 256² terrain tile | 19.9 ms |
+| 2048² patch texture for the 3D view | 718 ms |
+| Full location placement → 12 006 sites | 6.86 s |
+
+**In the browser, WebAssembly, 6 workers**
+
+| | |
+|---|---|
+| Time to first map | ~2.1 s |
+| World pregeneration, wall clock | 526 ms |
+| Tile | 39–59 ms |
+| Location placement | ~25 s, streamed — bosses and traders land in ~2 s |
+| **Warm reload** | **0 tiles generated** |
+| Seed search | ~30 seeds/s |
+| Marker hit-test, 12 000 sites | 1.8 µs |
+| Idle | 0 redraws, 0 busy workers |
+
+Three things carry that, and two of them are about *not* doing work:
+
+**Tiles are content-addressable.** A tile is a pure function of
+`seed:mode:palette:z/x/y`, so one computed once is correct forever. They are
+persisted to the Cache API and read back before a worker is ever asked, which
+is why a revisit generates nothing. The store *gates* the worker request rather
+than racing it — firing both would persist a tile and then regenerate it
+anyway.
+
+**Markers load per category.** A world holds ~12 000 sites and the default view
+draws 58. Categories are fetched the first time they are switched on. Placement
+itself still runs for all 183 types, because they compete for the same 64 m
+zones and skipping one moves everything placed after it.
+
+**The pool is deliberately not `cores - 1`.** Every worker generates terrain
+from noise rather than fetching a baked tile, so a full pool means one pan
+saturates the machine. At ~60% of cores, pregeneration is actually *faster*
+(526 ms against 873 ms) because six workers contend less than nine.
 
 ## Views
 
@@ -149,19 +236,24 @@ entire rest of the bundle.
 
 ## Points of interest
 
-`MARKERS` toggles eight categories — spawn, bosses, traders, crypts, camps,
-caves, mines, fortresses — drawn as flat geometric symbology rather than
-map-app pins, each with a dark halo so it survives white mountains and pale
-ice. Hovering a marker names it; boss/trader/spawn labels pin open once zoomed
-in. ~1 820 sites for a typical seed, computed in ~1 s.
+`MARKERS` toggles 15 categories — spawn, bosses, traders, crypts, camps, caves,
+mines, fortresses, runestones, ruins, villages, wrecks, monuments, resources and
+mysteries — drawn as flat geometric symbology rather than map-app pins, each
+with a dark halo so it survives white mountains and pale ice. Hovering a marker
+names it; boss, trader and spawn labels pin open once zoomed in. **12 006 sites
+across 183 location types** for a typical seed.
 
-Placement parameters are transcribed from Jötunn's auto-generated location
-list, which is dumped from a running game. Worth knowing when comparing
-against other sources:
+Placement parameters are transcribed from Jötunn's auto-generated dump of a
+running **Valheim 1.0.7**. Worth knowing when comparing against other sources:
 
-- **"Edge Median" means Everything.** It is a bitmask (`Edge|Median`), not a
-  third state. Only six types are genuinely Median-only, and those really are
-  restricted to zones whose eight neighbours all share the biome.
+- **`biome_area` is mostly Median, not Everything.** 67 of the 183 live types
+  are Median-only, including every boss altar, the start temple and all three
+  traders — so they never generate near a biome edge. An earlier version of
+  this table had them as Everything, on the theory that the dump's "Edge
+  Median" was a bitmask being misread. It *is* a bitmask, but plenty of types
+  genuinely carry only the Median bit, and treating those as Everything moves
+  boss and trader markers to places the game never puts them. On the default
+  seed it moved Eikthyr's nearest altar from 1 806 m to 454 m.
 - **No location has a max distance.** Bosses are spread across their whole
   biome, not confined to an inner ring.
 - **Traders have quantity 10, not 1.** The game places ten candidate camps and
@@ -250,6 +342,11 @@ Verified against ground truth, not assumed:
 - **Biome distribution** — Ashlands lands at 9.50% of world area, matching an
   independent community measurement of ~9.5% across six real seeds. Mistlands
   falls inside the independently measured 18.4–19.5% band.
+- **Seed hashing** — checked against two real `.fwl` world files as parsed by
+  a third-party save tool. Those files store the phrase *and* the integer the
+  game derived from it, so they are independent ground truth rather than
+  another copy of our own assumption: `Kh0zDpuPnw → 810132289` and
+  `q6GhJN6FwT → 517038747`, both exact.
 - **Draw order** — `offset0..3`, `riverSeed`, `streamSeed`, **`offset4` last**.
   Easy to get wrong, silently produces a different world.
 
@@ -273,9 +370,9 @@ were is a quiet source of error. Three places where the width is load-bearing:
 
 None of these is visible in a screenshot. All of them move biome boundaries.
 
-### Known limitations
+## Known limitations
 
-These are real and worth stating plainly:
+These are real and worth stating plainly.
 
 1. **Targets pre-1.0 world generation (`m_worldGenVersion = 2`).** The terrain
    math here is transcribed from a decompile of **0.218.15** — the Ashlands
@@ -324,15 +421,25 @@ These are real and worth stating plainly:
 cd crates/worldgen && cargo test --release
 ```
 
-Developed and checked against seed `j3QV2ftr3y`, which is the default in the
-UI and `TEST_SEED` in the suite.
-
-17 tests covering Unity RNG and hash vectors, the 176-sample Perlin ground
+18 tests covering the Unity RNG and hash vectors, the 176-sample Perlin ground
 truth, the mirror-symmetry quirk, seed→offset draw order, biome distribution
-against independent measurements, determinism, pole orientation, world-edge
-falloff, and — for locations — that every type places at least one, that
-placements respect their biome and distance constraints, and that no two
+against independent community measurements, determinism, pole orientation,
+world-edge falloff, and — for locations — that every type places at least one,
+that placements respect their biome and distance constraints, and that no two
 locations ever share a 64 m zone. One test renders a tile and asserts land
-pixels are painted their own biome's colour — measured over *all* land rather
+pixels are painted their own biome's colour, measured over *all* land rather
 than region interiors, because an interiors-only check passes even with a
 wildly over-wide boundary blend.
+
+Developed and checked against seed `j3QV2ftr3y`, the default in the UI and
+`TEST_SEED` in the suite.
+
+## Credits
+
+- [valheim-map.world][vmw] by wd40bomber7 — came first, and is still the
+  reference for what this kind of tool should do.
+- [Jötunn](https://github.com/Valheim-Modding/Jotunn) — the auto-generated
+  location and vegetation tables this transcribes, dumped from a running game.
+- Iron Gate Studio, for Valheim.
+
+Unofficial and unaffiliated. Not endorsed by Iron Gate.
