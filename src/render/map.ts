@@ -1,4 +1,5 @@
 import { TileCache } from '../core/cache'
+import { TileStore } from '../core/store'
 import { TilePool } from '../core/pool'
 import {
   MAX_ZOOM,
@@ -169,6 +170,11 @@ export interface Stats {
 export class MapView {
   private ctx: CanvasRenderingContext2D
   private cache = new TileCache()
+  /** Survives reloads. See `core/store.ts`. */
+  private store = new TileStore()
+  /** Keys whose persistent lookup is in flight, so a miss is only chased once
+   *  even though draw() runs many times before the answer arrives. */
+  private storePending = new Set<string>()
   private dirty = true
   private raf = 0
   private dpr = 1
@@ -634,7 +640,31 @@ export class MapView {
           else this.drawAncestor(zi, tx, ty, dx, dy, drawn + 1)
           const ccx = dx + drawn / 2 - w / 2
           const ccy = dy + drawn / 2 - h / 2
-          requests.push({ x: tx, y: ty, pri: Math.hypot(ccx, ccy) })
+          // Ask storage before asking a worker, and *instead of* asking one:
+          // a stored tile decodes in a few ms and costs no generation at all.
+          // Firing both would persist the tile and then regenerate it anyway,
+          // which is the opposite of the point.
+          if (this.store.available && !this.store.knownAbsent(key)) {
+            if (!this.storePending.has(key)) {
+              this.storePending.add(key)
+              const gen = this.generation
+              void this.store
+                .get(key)
+                .then((b) => {
+                  if (gen !== this.generation) {
+                    b?.close()
+                    return
+                  }
+                  if (b) this.cache.set(key, b)
+                  // On a hit this shows the tile; on a miss it brings us back
+                  // here with knownAbsent set, which queues the worker.
+                  this.invalidate()
+                })
+                .finally(() => this.storePending.delete(key))
+            }
+          } else {
+            requests.push({ x: tx, y: ty, pri: Math.hypot(ccx, ccy) })
+          }
         }
       }
     }
@@ -668,6 +698,15 @@ export class MapView {
           }
           this.cache.set(key, b)
           this.invalidate()
+          // Persist off the render path: PNG encoding is a few ms, and a tile
+          // that never gets written only costs a regeneration later.
+          const persist = () => void this.store.put(key, b)
+          if ('requestIdleCallback' in window) {
+            ;(window as unknown as { requestIdleCallback: (cb: () => void) => void })
+              .requestIdleCallback(persist)
+          } else {
+            setTimeout(persist, 400)
+          }
         })
         .catch(() => {})
         .finally(() => this.requested.delete(key))
