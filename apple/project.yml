@@ -1,0 +1,87 @@
+name: Vegvisr
+options:
+  bundleIdPrefix: dev.aritropaul
+  deploymentTarget: { macOS: "14.0", iOS: "17.0" }
+  createIntermediateGroups: true
+
+configs: { Debug: debug, Release: release }
+
+packages:
+  Worldgen:
+    path: .
+
+targets:
+  Vegvisr:
+    type: application
+    # One multiplatform target rather than two: the Rust-free Swift core and
+    # every panel are shared, so duplicating the spec would only invite drift.
+    supportedDestinations: [macOS, iOS]
+    deploymentTarget: { macOS: "14.0", iOS: "17.0" }
+    sources:
+      - path: Sources/App
+      - path: Sources/Render
+      - path: Shaders
+      # Folder REFERENCE so the bundle keeps a top-level "Fonts/" directory,
+      # which is what ATSApplicationFontsPath and UIAppFonts both point at.
+      - path: Resources/Fonts
+        type: folder
+    dependencies:
+      - package: Worldgen
+        product: Worldgen
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        CFBundleDisplayName: Vegvisr
+        LSApplicationCategoryType: public.app-category.utilities
+        ITSAppUsesNonExemptEncryption: false
+        # >60Hz on iPhone needs this opt-in or ProMotion is capped at 60.
+        CADisableMinimumFrameDurationOnPhone: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        ATSApplicationFontsPath: "Fonts"
+        UIAppFonts:
+          - Fonts/MartianMono-Regular.ttf
+          - Fonts/IBMPlexMono-Regular.ttf
+          - Fonts/RunyTunesRevisitedNF.ttf
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: dev.aritropaul.vegvisr.fwl
+            UTTypeDescription: Valheim World File
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [fwl]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Valheim World
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [dev.aritropaul.vegvisr.fwl]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.aritropaul.vegvisr
+        PRODUCT_NAME: Vegvisr
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # The Metal-facing types aren't concurrency-audited yet; Swift 6 mode
+        # here means fighting the SDK, not finding real races.
+        SWIFT_STRICT_CONCURRENCY: minimal
+        SWIFT_UPCOMING_FEATURE_REGION_BASED_ISOLATION: NO
+        # Ad-hoc "Sign to Run Locally" so a clone builds with no Apple ID.
+        # Put a real DEVELOPMENT_TEAM in a git-ignored Local.xcconfig to ship.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ENTITLEMENTS: ""
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
+        CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
+        CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: ""
+        MTL_FAST_MATH: NO
+      configs:
+        debug:
+          MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        release:
+          MTL_ENABLE_DEBUG_INFO: NO_INCLUDE_SOURCE
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
