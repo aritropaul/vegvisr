@@ -16,6 +16,21 @@ jobs:
   macos:
     name: macOS app
     runs-on: macos-latest
+
+    # Lifted to job level so `if: env.X != ''` can read them — secrets are not
+    # visible to `if` directly. Whether these are set is what decides between a
+    # notarised build and an ad-hoc one; the workflow does not fail without
+    # them, so a fork still produces a working artifact.
+    env:
+      SIGN_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      SIGN_P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+      NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+      NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+      NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+      NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,44 +43,92 @@ jobs:
 
       - run: brew install xcodegen
 
+      - name: Import the signing certificate
+        if: env.SIGN_P12 != ''
+        run: |
+          set -euo pipefail
+          # A throwaway keychain, not the runner's login one: it is unlocked
+          # with a password only this job knows and deleted in the final step,
+          # so the key never outlives the run even if a later step fails.
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          pw=$(uuidgen)
+          echo "KEYCHAIN=$kc" >> "$GITHUB_ENV"
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          echo "$SIGN_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" \
+            -P "$SIGN_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # Without this, codesign blocks on a GUI prompt that never appears.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$kc" \
+            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+          if [ -z "$identity" ]; then
+            echo "::error::the .p12 holds no Developer ID Application identity"
+            security find-identity -v -p codesigning "$kc"
+            exit 1
+          fi
+          echo "signing as: $identity"
+          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          # "Developer ID Application: Someone (TEAMID)" — the team is already
+          # in the certificate, so it need not also be a secret.
+          team=$(echo "$identity" | sed -nE 's/.*\(([A-Z0-9]+)\)$/\1/p')
+          echo "team: $team"
+          echo "DEV_TEAM=$team" >> "$GITHUB_ENV"
+
       - name: Build
         working-directory: apple
         run: |
-          set -o pipefail
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
           xcodegen generate
           # `generic/platform=macOS` plus explicit ARCHS, because a bare
           # `platform=macOS` destination builds for the runner's own
-          # architecture — which shipped an arm64-only app while the
+          # architecture — which shipped an arm64-only v0.1.0 while the
           # deployment target claims macOS 14, a version that still runs on
-          # Intel. Verified with `lipo -archs`.
-          # The tag is the version. Overriding it here means a release cannot
-          # disagree with its own tag, and project.yml's value stays a local
-          # default rather than something to remember to bump.
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
-          xcodebuild -project Vegvisr.xcodeproj -scheme Vegvisr \
-            -configuration Release -destination 'generic/platform=macOS' \
-            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
-            MARKETING_VERSION="${tag#v}" \
-            -derivedDataPath build build | tail -20
+          # Intel. The tag is the version, so a release cannot disagree with
+          # its own name.
+          args=(
+            -project Vegvisr.xcodeproj -scheme Vegvisr
+            -configuration Release -destination 'generic/platform=macOS'
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO
+            MARKETING_VERSION="${tag#v}"
+            -derivedDataPath build
+          )
+          if [ -n "${SIGN_IDENTITY:-}" ]; then
+            # Notarisation requires the hardened runtime and a secure
+            # timestamp; without either, submission is rejected rather than
+            # merely warned about.
+            args+=(
+              CODE_SIGN_STYLE=Manual
+              CODE_SIGN_IDENTITY="$SIGN_IDENTITY"
+              DEVELOPMENT_TEAM="${DEV_TEAM:-}"
+              ENABLE_HARDENED_RUNTIME=YES
+              OTHER_CODE_SIGN_FLAGS="--timestamp --keychain=$KEYCHAIN"
+            )
+          fi
+          xcodebuild "${args[@]}" build | tail -20
 
-      - name: Package
-        id: package
+      - name: Check the build before shipping it
+        id: check
         run: |
           set -euo pipefail
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           app=$(find apple/build/Build/Products/Release -maxdepth 1 -name 'Vegvisr.app' | head -1)
           test -n "$app" || { echo "::error::no Vegvisr.app in the build products"; exit 1; }
-          # ditto, not zip: a .app is a bundle with symlinks, and zip flattens
-          # them into broken copies.
-          # Fail loudly rather than publish an app that misreports itself.
-          got=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' \
-                  "$app/Contents/Info.plist")
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          got=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")
           echo "bundle version: $got"
           if [ "$got" != "${tag#v}" ]; then
             echo "::error::bundle says $got, tag says ${tag#v}"
             exit 1
           fi
-          # Fail loudly rather than publish a half-platform app.
+
           archs=$(lipo -archs "$app/Contents/MacOS/Vegvisr")
           echo "architectures: $archs"
           for want in arm64 x86_64; do
@@ -74,9 +137,58 @@ jobs:
               *) echo "::error::$want missing from the binary"; exit 1 ;;
             esac
           done
-          ditto -c -k --keepParent "$app" "Vegvisr-macOS-${tag}.zip"
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+      - name: Notarise and staple
+        if: env.SIGN_P12 != '' && (env.NOTARY_PASSWORD != '' || env.NOTARY_KEY_P8 != '')
+        run: |
+          set -euo pipefail
+          app="${{ steps.check.outputs.app }}"
+
+          # notarytool takes an archive, not a bundle. ditto, not zip: a .app
+          # carries symlinks that zip flattens into broken copies.
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+
+          if [ -n "${NOTARY_KEY_P8:-}" ]; then
+            echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/key.p8"
+            creds=(--key "$RUNNER_TEMP/key.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+          else
+            creds=(--apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD"
+                   --team-id "${NOTARY_TEAM_ID:-$DEV_TEAM}")
+          fi
+
+          # --wait blocks until Apple answers; without it the job would succeed
+          # while the submission was still pending and could still be rejected.
+          set +e
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" "${creds[@]}" \
+            --wait --timeout 30m | tee "$RUNNER_TEMP/notary.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          rm -f "$RUNNER_TEMP/key.p8"
+
+          id=$(grep -m1 -oE '[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}' \
+                 "$RUNNER_TEMP/notary.txt" || true)
+          if [ "$status" -ne 0 ] || ! grep -q "status: Accepted" "$RUNNER_TEMP/notary.txt"; then
+            echo "::error::notarisation did not succeed"
+            [ -n "$id" ] && xcrun notarytool log "$id" "${creds[@]}" || true
+            exit 1
+          fi
+
+          # Staple the ticket into the bundle so it validates with no network.
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          # The real proof: what Gatekeeper says about it.
+          spctl -a -vvv -t install "$app"
+          echo "NOTARISED=1" >> "$GITHUB_ENV"
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          tag="${{ steps.check.outputs.tag }}"
+          ditto -c -k --keepParent "${{ steps.check.outputs.app }}" "Vegvisr-macOS-${tag}.zip"
           echo "zip=Vegvisr-macOS-${tag}.zip" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           ls -lh "Vegvisr-macOS-${tag}.zip"
 
       - name: Publish
@@ -84,10 +196,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ steps.package.outputs.tag }}"
+          tag="${{ steps.check.outputs.tag }}"
+          notes=.github/release-notes.md
+          [ "${NOTARISED:-}" = "1" ] && notes=.github/release-notes-notarised.md
+          echo "notes: $notes"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${{ steps.package.outputs.zip }}" --clobber
           else
             gh release create "$tag" "${{ steps.package.outputs.zip }}" \
-              --title "Vegvisr $tag" --notes-file .github/release-notes.md
+              --title "Vegvisr $tag" --notes-file "$notes"
           fi
+
+      - name: Remove the signing keychain
+        if: always() && env.SIGN_P12 != ''
+        run: security delete-keychain "$KEYCHAIN" || true

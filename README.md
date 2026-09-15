@@ -590,8 +590,17 @@ gates the difference; see [above](#the-swift-port-is-not-byte-identical) for
 what it holds exact and what it merely bounds.
 
 CI runs four jobs on every push: the Rust suite, a web typecheck and build, a
-Release build of the app for both macOS and iOS, and the parity gate. Tagging
-`v*` builds and publishes the Mac app.
+Release build of the app for both macOS and iOS, and the parity gate.
+
+Tagging `v*` builds and publishes the Mac app, universal and with the tag as
+its version — the workflow reads both back out of the built bundle and refuses
+to publish if either disagrees. Given a Developer ID certificate and notary
+credentials in repository secrets (`MACOS_CERTIFICATE_P12`,
+`MACOS_CERTIFICATE_PASSWORD`, and either `NOTARY_APPLE_ID` +
+`NOTARY_PASSWORD` or `NOTARY_KEY_P8` + `NOTARY_KEY_ID` + `NOTARY_ISSUER_ID`)
+it also signs with the hardened runtime, notarises, staples and checks the
+result against Gatekeeper. Without them it falls back to an ad-hoc signature,
+so a fork still gets a working build.
 
 Developed and checked against seed `j3QV2ftr3y`, the default in the UI and
 `TEST_SEED` in the suite.
