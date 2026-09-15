@@ -32,6 +32,13 @@ targets:
       path: Sources/App/Info.plist
       properties:
         CFBundleDisplayName: Vegvisr
+        # Without these two, XcodeGen bakes its own default of "1.0" into the
+        # plist and MARKETING_VERSION is silently ignored — v0.1.0 and v0.1.1
+        # both shipped reporting 1.0. The release workflow overrides
+        # MARKETING_VERSION from the tag, so the tag is the source of truth and
+        # the value below is only what a local build reports.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSApplicationCategoryType: public.app-category.utilities
         ITSAppUsesNonExemptEncryption: false
         # >60Hz on iPhone needs this opt-in or ProMotion is capped at 60.

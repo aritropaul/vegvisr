@@ -38,9 +38,14 @@ jobs:
           # architecture — which shipped an arm64-only app while the
           # deployment target claims macOS 14, a version that still runs on
           # Intel. Verified with `lipo -archs`.
+          # The tag is the version. Overriding it here means a release cannot
+          # disagree with its own tag, and project.yml's value stays a local
+          # default rather than something to remember to bump.
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
           xcodebuild -project Vegvisr.xcodeproj -scheme Vegvisr \
             -configuration Release -destination 'generic/platform=macOS' \
             ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="${tag#v}" \
             -derivedDataPath build build | tail -20
 
       - name: Package
@@ -52,6 +57,14 @@ jobs:
           test -n "$app" || { echo "::error::no Vegvisr.app in the build products"; exit 1; }
           # ditto, not zip: a .app is a bundle with symlinks, and zip flattens
           # them into broken copies.
+          # Fail loudly rather than publish an app that misreports itself.
+          got=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' \
+                  "$app/Contents/Info.plist")
+          echo "bundle version: $got"
+          if [ "$got" != "${tag#v}" ]; then
+            echo "::error::bundle says $got, tag says ${tag#v}"
+            exit 1
+          fi
           # Fail loudly rather than publish a half-platform app.
           archs=$(lipo -archs "$app/Contents/MacOS/Vegvisr")
           echo "architectures: $archs"
