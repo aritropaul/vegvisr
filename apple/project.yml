@@ -62,7 +62,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.aritropaul.vegvisr
         PRODUCT_NAME: Vegvisr
         SWIFT_VERSION: "6.0"
-        MARKETING_VERSION: "0.1.0"
+        MARKETING_VERSION: "0.1.1"
         CURRENT_PROJECT_VERSION: "1"
         # The Metal-facing types aren't concurrency-audited yet; Swift 6 mode
         # here means fighting the SDK, not finding real races.

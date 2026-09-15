@@ -33,8 +33,14 @@ jobs:
         run: |
           set -o pipefail
           xcodegen generate
+          # `generic/platform=macOS` plus explicit ARCHS, because a bare
+          # `platform=macOS` destination builds for the runner's own
+          # architecture — which shipped an arm64-only app while the
+          # deployment target claims macOS 14, a version that still runs on
+          # Intel. Verified with `lipo -archs`.
           xcodebuild -project Vegvisr.xcodeproj -scheme Vegvisr \
-            -configuration Release -destination 'platform=macOS' \
+            -configuration Release -destination 'generic/platform=macOS' \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
             -derivedDataPath build build | tail -20
 
       - name: Package
@@ -46,6 +52,15 @@ jobs:
           test -n "$app" || { echo "::error::no Vegvisr.app in the build products"; exit 1; }
           # ditto, not zip: a .app is a bundle with symlinks, and zip flattens
           # them into broken copies.
+          # Fail loudly rather than publish a half-platform app.
+          archs=$(lipo -archs "$app/Contents/MacOS/Vegvisr")
+          echo "architectures: $archs"
+          for want in arm64 x86_64; do
+            case " $archs " in
+              *" $want "*) ;;
+              *) echo "::error::$want missing from the binary"; exit 1 ;;
+            esac
+          done
           ditto -c -k --keepParent "$app" "Vegvisr-macOS-${tag}.zip"
           echo "zip=Vegvisr-macOS-${tag}.zip" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
