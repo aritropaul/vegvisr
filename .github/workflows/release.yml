@@ -22,14 +22,11 @@ jobs:
     # notarised build and an ad-hoc one; the workflow does not fail without
     # them, so a fork still produces a working artifact.
     env:
-      SIGN_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-      SIGN_P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-      NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-      NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
-      NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
-      NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-      NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+      SIGN_P12: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+      SIGN_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+      NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+      NOTARY_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+      NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +53,13 @@ jobs:
           security create-keychain -p "$pw" "$kc"
           security set-keychain-settings -lut 21600 "$kc"
           security unlock-keychain -p "$pw" "$kc"
-          echo "$SIGN_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          # Developer ID certificates are issued under the G2 intermediate,
+          # which a keychain created seconds ago does not have. Without it
+          # codesign cannot build a chain to the Apple root.
+          curl -sSfL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+            -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$kc" -T /usr/bin/codesign
+          echo -n "$SIGN_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security import "$RUNNER_TEMP/cert.p12" -k "$kc" \
             -P "$SIGN_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           rm -f "$RUNNER_TEMP/cert.p12"
@@ -64,20 +67,16 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$pw" "$kc" >/dev/null
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
-          identity=$(security find-identity -v -p codesigning "$kc" \
-            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
-          if [ -z "$identity" ]; then
+          security find-identity -v -p codesigning "$kc"
+          found=$(security find-identity -v -p codesigning "$kc" \
+            | grep -c "Developer ID Application" || true)
+          if [ "$found" -eq 0 ]; then
             echo "::error::the .p12 holds no Developer ID Application identity"
-            security find-identity -v -p codesigning "$kc"
             exit 1
           fi
-          echo "signing as: $identity"
-          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
-          # "Developer ID Application: Someone (TEAMID)" — the team is already
-          # in the certificate, so it need not also be a secret.
-          team=$(echo "$identity" | sed -nE 's/.*\(([A-Z0-9]+)\)$/\1/p')
-          echo "team: $team"
-          echo "DEV_TEAM=$team" >> "$GITHUB_ENV"
+          # A prefix, not the full common name: there is one such certificate
+          # per team, and this cannot drift if the name changes.
+          echo "SIGN_IDENTITY=Developer ID Application" >> "$GITHUB_ENV"
 
       - name: Build
         working-directory: apple
@@ -105,9 +104,9 @@ jobs:
             args+=(
               CODE_SIGN_STYLE=Manual
               CODE_SIGN_IDENTITY="$SIGN_IDENTITY"
-              DEVELOPMENT_TEAM="${DEV_TEAM:-}"
+              DEVELOPMENT_TEAM="${NOTARY_TEAM_ID:-}"
               ENABLE_HARDENED_RUNTIME=YES
-              OTHER_CODE_SIGN_FLAGS="--timestamp --keychain=$KEYCHAIN"
+              OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime --keychain $KEYCHAIN"
             )
           fi
           xcodebuild "${args[@]}" build | tail -20
@@ -141,7 +140,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
 
       - name: Notarise and staple
-        if: env.SIGN_P12 != '' && (env.NOTARY_PASSWORD != '' || env.NOTARY_KEY_P8 != '')
+        if: env.SIGN_P12 != '' && env.NOTARY_PASSWORD != ''
         run: |
           set -euo pipefail
           app="${{ steps.check.outputs.app }}"
@@ -150,13 +149,8 @@ jobs:
           # carries symlinks that zip flattens into broken copies.
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
 
-          if [ -n "${NOTARY_KEY_P8:-}" ]; then
-            echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/key.p8"
-            creds=(--key "$RUNNER_TEMP/key.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
-          else
-            creds=(--apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD"
-                   --team-id "${NOTARY_TEAM_ID:-$DEV_TEAM}")
-          fi
+          creds=(--apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD"
+                 --team-id "$NOTARY_TEAM_ID")
 
           # --wait blocks until Apple answers; without it the job would succeed
           # while the submission was still pending and could still be rejected.
@@ -165,7 +159,6 @@ jobs:
             --wait --timeout 30m | tee "$RUNNER_TEMP/notary.txt"
           status=${PIPESTATUS[0]}
           set -e
-          rm -f "$RUNNER_TEMP/key.p8"
 
           id=$(grep -m1 -oE '[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}' \
                  "$RUNNER_TEMP/notary.txt" || true)
