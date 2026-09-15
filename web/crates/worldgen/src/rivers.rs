@@ -80,6 +80,22 @@ impl Rivers {
         (weight, width)
     }
 
+    pub fn debug_cell_count(&self) -> usize { self.grid.len() }
+    pub fn debug_point_count(&self) -> usize { self.grid.values().map(|v| v.len()).sum() }
+    /// Order-independent so hash-map layout cannot affect the result.
+    pub fn debug_checksum(&self) -> u64 {
+        let mut acc: u64 = 0;
+        for pts in self.grid.values() {
+            for p in pts {
+                acc = acc
+                    .wrapping_add((p.x.to_bits() as u64).wrapping_mul(0x9E3779B1))
+                    .wrapping_add((p.y.to_bits() as u64).wrapping_mul(0x85EBCA77))
+                    .wrapping_add(p.w.to_bits() as u64);
+            }
+        }
+        acc
+    }
+
     fn add_point(&mut self, x: f32, y: f32, r: f32) {
         let home = river_grid(x, y);
         let span = (r / 64.0).ceil() as i32;
@@ -159,6 +175,8 @@ impl WorldGenerator {
         }
         h
     }
+
+    pub fn debug_find_lakes(&self) -> Vec<(f32, f32)> { self.find_lakes() }
 
     /// 128m grid scan for sub-waterline terrain, then greedy cluster merge.
     fn find_lakes(&self) -> Vec<(f32, f32)> {

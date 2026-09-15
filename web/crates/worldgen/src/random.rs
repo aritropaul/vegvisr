@@ -27,6 +27,9 @@ impl UnityRandom {
         Self { s0, s1, s2, s3 }
     }
 
+    /// Exposed for the cross-language parity harness.
+    pub fn state(&self) -> (u32, u32, u32, u32) { (self.s0, self.s1, self.s2, self.s3) }
+
     #[inline]
     pub fn next_u32(&mut self) -> u32 {
         let t = self.s0 ^ (self.s0 << 11);
