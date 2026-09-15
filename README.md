@@ -1,22 +1,40 @@
 # Vegvisr
 
+[![ci](https://github.com/aritropaul/vegvisr/actions/workflows/ci.yml/badge.svg)](https://github.com/aritropaul/vegvisr/actions/workflows/ci.yml)
+
 **[vegvisr.vercel.app](https://vegvisr.vercel.app)** — a Valheim seed map that
-runs entirely in your browser.
+runs entirely on your own machine, in the browser or as a native Mac and
+iPhone app.
 
 Type a seed phrase and the whole world appears: biomes, terrain, rivers, and
 12 000 points of interest, down to 0.32 m per pixel. There is no backend, no
-upload step and no queue. Valheim's world generator is reimplemented in Rust,
-compiled to 62 KB of WebAssembly, and run across a pool of workers on your own
-machine.
+upload step and no queue. Valheim's world generator is reimplemented twice — in
+Rust for the web, compiled to 62 KB of WebAssembly, and in Swift for the Apple
+app — and run across a pool of workers on your own machine.
 
 Named for the *vegvísir*, the Norse wayfinder — and in Valheim, the runestone
 that reveals locations on your map.
 
+**Web**
+
 ```
+cd web
 bun install
 bun run build:wasm   # needs: rustup target add wasm32-unknown-unknown
 bun run dev
 ```
+
+**Mac and iPhone**
+
+```
+cd apple
+xcodegen generate    # needs: brew install xcodegen
+open Vegvisr.xcodeproj
+```
+
+The Xcode project is generated, not committed, and the app is ad-hoc signed, so
+a fresh clone builds and runs with no Apple ID. Shipping to a device needs a
+`DEVELOPMENT_TEAM` in a git-ignored `apple/Local.xcconfig`.
 
 ## What it does
 
@@ -33,6 +51,8 @@ bun run dev
 - **Ruler, search, permalinks** — measure a sailing route, jump to a location
   by name or coordinate, share a link to an exact view.
 - **Drop a `.fwl`** world file to load its seed without retyping it.
+- **A native Mac and iPhone app** — the same map and the same look, in Swift
+  and Metal, with no Rust and no WebAssembly anywhere in it.
 
 ## Why it is fast
 
@@ -130,6 +150,58 @@ zones and skipping one moves everything placed after it.
 from noise rather than fetching a baked tile, so a full pool means one pan
 saturates the machine. At ~60% of cores, pregeneration is actually *faster*
 (526 ms against 873 ms) because six workers contend less than nine.
+
+## The Mac and iPhone app
+
+One universal target builds for both. It is not the web app in a wrapper and it
+is not the Rust generator behind an FFI shim: `apple/Sources/Worldgen/` is the
+whole algorithm rewritten in Swift — Perlin, the Unity RNG, base height, the
+per-biome height functions, rivers, the 183-entry location table, tile
+rasterisation — 2 384 lines of Swift from 3 687 lines of Rust, ported line for
+line under a stated
+[porting contract](apple/Sources/Worldgen/UnityRandom.swift) that fixes how
+each Rust construct maps (`wrapping_mul` → `&*`, `as u32` →
+`UInt32(bitPattern:)`, every `f64 → f32` narrowing at the same point it
+happens in Rust).
+
+Linking the Rust crate would have been faster to write and worse to own: an
+XCFramework, a cargo toolchain in every build, and a C boundary in the middle
+of the one thing whose exactness the project rests on. The port is gated
+against the original in CI instead — see [Accuracy](#the-swift-port-is-not-byte-identical).
+
+The renderer is Metal rather than SwiftUI drawing: one textured quad per tile
+over a quadtree LOD, instanced quads for markers, and glyph symbology
+rasterised on the CPU from the same paths the web canvas draws.
+
+- **Tiles are content-addressable here too**, and persisted — LZFSE over the
+  raw pixel block rather than PNG, because PNG would mean a Core Graphics
+  round-trip in both directions. **99 KB a tile** against 256 KB raw, and
+  smaller than the web's PNGs. Measured: a warm launch draws all 56 visible
+  tiles from disk with **zero** generation, in 60 ms against 270 ms cold.
+- **The app reopens on the seed you left it on**, with that world's stored
+  tiles read back into memory *before the first frame* — the reads overlap the
+  world build instead of queueing behind it.
+- **The stand-in for a tile that has not arrived is a cropped ancestor.** One
+  sub-rect of the coarser tile that covers exactly this ground. Drawing the
+  whole ancestor into a child's slot instead — which is what it did at first —
+  puts a crushed copy of a 4x larger region in every slot, and reads on screen
+  as the map violently refreshing at every zoom step. It measures as **4.8x
+  further from ground truth** than the crop (`--lodshot` renders one viewport
+  three ways and diffs the pixels).
+- **LOD selection is just `round(zoom + log2(scale))` plus a dead band.**
+  Holding the level through a gesture, which sounds like the way to stop
+  re-tiling, lets tiles magnify by up to 3x before the level catches up; the
+  snap back to sharp reads as refreshing just as much as a re-tile does.
+- **The worker pool is P-cores plus half the E-cores.** Apple Silicon reports
+  both in `activeProcessorCount` and they are not interchangeable for
+  sustained work; 60% of everything yields 3 workers on a 4+6 part and leaves
+  most of the machine idle.
+- **One shared `WorldGenerator` across all workers.** It is immutable after
+  pregeneration and carries the river grid — ~770 k points. A copy per worker
+  cost 50 MB apiece and made every worker repeat the same 120 ms build.
+
+Both of those last two came out of measuring rather than reading: the app sat
+at 496 MB and 31% idle CPU, and neither cause was where it looked.
 
 ## Views
 
@@ -279,18 +351,27 @@ harder than it looks:
 ## Architecture
 
 ```
-crates/worldgen/          Rust world generator (the whole algorithm)
-  random.rs               UnityEngine.Random + GetStableHashCode
-  perlin.rs               Mathf.PerlinNoise
-  geo.rs                  GetBiome / GetBaseHeight
-  heights.rs              per-biome height functions
-  rivers.rs               lakes, rivers, streams (Pregenerate)
-  render.rs               tile rasterisation + palettes
-src/
-  workers/tile.worker.ts  one WASM instance per worker
-  core/pool.ts            worker pool, priority queue, dedup, cancellation
-  core/cache.ts           LRU ImageBitmap cache
-  render/map.ts           pan/zoom, quadtree LOD, progressive refinement
+web/
+  crates/worldgen/          Rust world generator (the whole algorithm)
+    random.rs               UnityEngine.Random + GetStableHashCode
+    perlin.rs               Mathf.PerlinNoise
+    geo.rs                  GetBiome / GetBaseHeight
+    heights.rs              per-biome height functions
+    rivers.rs               lakes, rivers, streams (Pregenerate)
+    render.rs               tile rasterisation + palettes
+  src/
+    workers/tile.worker.ts  one WASM instance per worker
+    core/pool.ts            worker pool, priority queue, dedup, cancellation
+    core/cache.ts           LRU ImageBitmap cache
+    core/store.ts           persistent tile store (Cache API)
+    render/map.ts           pan/zoom, quadtree LOD, progressive refinement
+apple/
+  Sources/Worldgen/         the same algorithm in Swift — no Rust, no FFI
+  Sources/Render/           Metal map: LOD, tile pool, disk store, glyph atlas
+  Sources/App/              SwiftUI chrome, shared by macOS and iOS
+  Shaders/Tile.metal        textured tile quads, instanced marker quads
+  Tests/parity/             prints the same vectors the Rust harness does
+scripts/parity.py           gates the two generators against each other
 ```
 
 Three decisions worth recording, each of which was researched rather than guessed:
@@ -350,6 +431,46 @@ Verified against ground truth, not assumed:
   `q6GhJN6FwT → 517038747`, both exact.
 - **Draw order** — `offset0..3`, `riverSeed`, `streamSeed`, **`offset4` last**.
   Easy to get wrong, silently produces a different world.
+
+### The Swift port is not byte-identical
+
+It is close, the gap is measured, and CI asserts the bound rather than
+pretending it is zero — a gate that demanded byte equality would have to be
+switched off, and a switched-off gate catches nothing.
+
+Rust and Swift reach different `libm` implementations for `sin`, `cos` and
+`pow`. Each is correctly rounded to within an ULP of the true result, but not
+to the *same* ULP, and `GetBaseHeight` is deep enough that one ULP survives to
+the output. Unity's `Mathf` semantics are reproduced on both sides (`Mathf.Sin`
+is a double-precision `sin` narrowed to float, not a float `sinf`), which
+removes the larger divergence; this is what is left.
+
+`./scripts/parity.sh` runs both generators over seed `j3QV2ftr3y` and compares
+68 vectors. **52 must match exactly**, and do:
+
+- the RNG's internal state and its output vectors
+- every seed-hash vector, including the two checked against real `.fwl` files
+- the seed → offset draw order
+- the Perlin checksum and the mirror-symmetry quirk
+- which biome each probe position lands in
+- every biome's share of world area
+- **every boss, trader and start-temple position** — all 28 of them
+
+**16 are bounded**, with these observed values:
+
+| | divergence |
+|---|---|
+| Height in metres, 8 probes | 7 identical, one differs by **5.4e-5 m** |
+| Raw height bit patterns | at worst **92 float32 steps** |
+| Tile byte sums, 3 renders | **1-2** out of ~26 000 000 |
+| Total locations placed | 12 163 vs 12 162 — **one site** |
+| Per category | caves −1, ruins −2, villages +2 |
+
+The location count is the only one a user could notice, and it is the expected
+consequence rather than a separate bug: placement is sequential rejection
+sampling against one shared occupancy map, so a single flipped constraint test
+moves what comes after it. Spawn, boss and trader counts are unchanged, which
+is what a seed report states.
 
 ### Precision is part of the algorithm
 
@@ -450,7 +571,8 @@ These are real and worth stating plainly.
 ## Testing
 
 ```
-cd crates/worldgen && cargo test --release
+cd web/crates/worldgen && cargo test --release   # 18 tests
+./scripts/parity.sh                              # Rust generator vs Swift port
 ```
 
 18 tests covering the Unity RNG and hash vectors, the 176-sample Perlin ground
@@ -462,6 +584,14 @@ locations ever share a 64 m zone. One test renders a tile and asserts land
 pixels are painted their own biome's colour, measured over *all* land rather
 than region interiors, because an interiors-only check passes even with a
 wildly over-wide boundary blend.
+
+`scripts/parity.sh` builds both generators, runs them over the same seed and
+gates the difference; see [above](#the-swift-port-is-not-byte-identical) for
+what it holds exact and what it merely bounds.
+
+CI runs four jobs on every push: the Rust suite, a web typecheck and build, a
+Release build of the app for both macOS and iOS, and the parity gate. Tagging
+`v*` builds and publishes the Mac app.
 
 Developed and checked against seed `j3QV2ftr3y`, the default in the UI and
 `TEST_SEED` in the suite.
