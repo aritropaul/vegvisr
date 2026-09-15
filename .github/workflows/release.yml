@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Select the newest installed Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - run: brew install xcodegen
+
+      - name: Build
+        working-directory: apple
+        run: |
+          set -o pipefail
+          xcodegen generate
+          xcodebuild -project Vegvisr.xcodeproj -scheme Vegvisr \
+            -configuration Release -destination 'platform=macOS' \
+            -derivedDataPath build build | tail -20
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          app=$(find apple/build/Build/Products/Release -maxdepth 1 -name 'Vegvisr.app' | head -1)
+          test -n "$app" || { echo "::error::no Vegvisr.app in the build products"; exit 1; }
+          # ditto, not zip: a .app is a bundle with symlinks, and zip flattens
+          # them into broken copies.
+          ditto -c -k --keepParent "$app" "Vegvisr-macOS-${tag}.zip"
+          echo "zip=Vegvisr-macOS-${tag}.zip" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          ls -lh "Vegvisr-macOS-${tag}.zip"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.package.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${{ steps.package.outputs.zip }}" --clobber
+          else
+            gh release create "$tag" "${{ steps.package.outputs.zip }}" \
+              --title "Vegvisr $tag" --notes-file .github/release-notes.md
+          fi
