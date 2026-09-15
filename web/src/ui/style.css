@@ -10,7 +10,21 @@
      headers at tight tracking. IBM Plex Mono carries the numbers. */
   --display: "Martian Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Only the wordmark uses this. No sensible fallback exists for a runic
+     face, so it falls back to the display font rather than to something
+     that would read as a different product. */
+  --rune: "Runy Tunes Revisited NF", var(--display);
+  /* The left column is a hardcoded ladder of offsets, so the wordmark's
+     height lives here once instead of being added into four numbers. */
+  --wordmark-h: 46px;
   color-scheme: dark;
+}
+
+@font-face {
+  font-family: "Runy Tunes Revisited NF";
+  src: url("/fonts/RunyTunesRevisitedNF.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
 }
 
 * { box-sizing: border-box; }
@@ -76,7 +90,7 @@ html, body {
 .panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
 .panel::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
 
-.tl { top: 14px; left: 14px; }
+.tl { top: calc(14px + var(--wordmark-h)); left: 14px; }
 .tr { top: 14px; right: 14px; }
 .tr2 { top: 152px; right: 14px; width: 186px; }
 .lm { top: 50%; left: 14px; transform: translateY(-50%); min-width: 0; }
@@ -148,8 +162,8 @@ html, body {
 .find-row b { font-weight: 400; font-variant-numeric: tabular-nums; }
 
 .tl2 {
-  top: 138px; left: 14px; width: 236px;
-  max-height: clamp(96px, calc(50vh - 268px), 300px);
+  top: calc(138px + var(--wordmark-h)); left: 14px; width: 236px;
+  max-height: clamp(96px, calc(50vh - 268px - var(--wordmark-h)), 300px);
   overflow-y: auto;
 }
 .bl { left: 14px; bottom: 14px; width: 236px; }
@@ -444,3 +458,103 @@ html, body {
 @media (max-width: 620px) {
   .br { display: none; }
 }
+
+/* ── wordmark ───────────────────────────────────────────────────────────
+   The app's top-left treatment, reproduced here so the two front ends read
+   as one product. */
+
+.wordmark {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  pointer-events: none;
+}
+.wordmark b {
+  font-family: var(--rune);
+  font-weight: 400;
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: 1.5px;
+  color: var(--ink);
+  /* Holds over bright meadow, where the wash alone is not enough. */
+  text-shadow: 0 1px 6px rgba(4, 7, 14, 0.9);
+}
+.wordmark i {
+  font-family: var(--display);
+  font-weight: 300;
+  font-style: normal;
+  font-size: 7px;
+  letter-spacing: 0.14px;
+  color: rgba(150, 235, 255, 0.32);
+}
+
+/* Gradient blur bleeding out of the corner, under the panels.
+   Two masked blur passes rather than one: a single blur that stops dead has a
+   visible edge, and a wider, gentler pass beneath a tighter one reads as the
+   blur falling off. The third layer is ink, not blur — blur alone does not
+   darken a bright map enough for the wordmark to hold. */
+.cornerwash {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: min(46vw, 520px);
+  height: min(40vh, 340px);
+  z-index: 1;
+  pointer-events: none;
+}
+.cornerwash::before,
+.cornerwash::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+}
+.cornerwash::before {
+  width: 100%;
+  height: 100%;
+  mask-image: linear-gradient(
+    to bottom right,
+    rgba(0, 0, 0, 0.55) 0%,
+    rgba(0, 0, 0, 0.22) 45%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom right,
+    rgba(0, 0, 0, 0.55) 0%,
+    rgba(0, 0, 0, 0.22) 45%,
+    transparent 100%
+  );
+}
+.cornerwash::after {
+  width: 62%;
+  height: 62%;
+  mask-image: radial-gradient(
+    circle at top left,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0.35) 55%,
+    transparent 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    circle at top left,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0.35) 55%,
+    transparent 100%
+  );
+}
+.cornerwash span {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at top left,
+    rgba(4, 7, 14, 0.78) 0%,
+    rgba(4, 7, 14, 0.3) 50%,
+    transparent 100%
+  );
+}
+
