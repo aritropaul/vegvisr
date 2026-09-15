@@ -558,3 +558,25 @@ html, body {
   );
 }
 
+/* Only rendered on Apple platforms, and only until the app is signed for
+   Universal Links — after that the app opens before this page does. */
+.openapp {
+  /* In the wordmark's flex row, so showing it shifts nothing. The row itself
+     is pointer-transparent, so this opts back in. */
+  pointer-events: auto;
+  align-self: center;
+  font-family: var(--display);
+  font-size: 7px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: rgba(150, 235, 255, 0.55);
+  background: rgba(150, 235, 255, 0.05);
+  border: 1px solid var(--line);
+  padding: 4px 7px;
+  cursor: pointer;
+}
+.openapp:hover {
+  color: var(--ink);
+  border-color: rgba(150, 235, 255, 0.4);
+}
+.openapp[hidden] { display: none; }

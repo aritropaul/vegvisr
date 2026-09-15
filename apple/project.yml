@@ -56,6 +56,13 @@ targets:
           - Fonts/MartianMono-Regular.ttf
           - Fonts/IBMPlexMono-Regular.ttf
           - Fonts/RunyTunesRevisitedNF.ttf
+        # The scheme works in an ad-hoc build; Universal Links need a signed
+        # app with an associated-domains entitlement, so this is what carries
+        # links until then — and costs nothing to keep afterwards.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.aritropaul.vegvisr.link
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes: [vegvisr]
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: dev.aritropaul.vegvisr.fwl
             UTTypeDescription: Valheim World File

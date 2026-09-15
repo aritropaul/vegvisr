@@ -11,6 +11,7 @@ import {
 } from './core/urlstate'
 import { MapView, glyph } from './render/map'
 import { Terrain3D } from './render/terrain3d'
+import { initAppLink } from './core/applink'
 
 /**
  * World-generation rulesets Valheim has shipped, newest first.
@@ -1076,6 +1077,8 @@ function applyState(st: ViewState) {
     view.invalidate()
   }
 }
+
+initAppLink()
 
 const boot = decodeUrl(location.search, seedInput.value.trim())
 seedInput.value = boot.seed

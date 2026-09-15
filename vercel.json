@@ -3,5 +3,16 @@
   "framework": null,
   "installCommand": "cd web && bun install --frozen-lockfile",
   "buildCommand": "cd web && bunx vite build",
-  "outputDirectory": "web/dist"
+  "outputDirectory": "web/dist",
+  "headers": [
+    {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ]
+    }
+  ]
 }

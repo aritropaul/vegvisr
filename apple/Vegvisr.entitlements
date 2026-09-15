@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Makes an https link to the site open the app directly, with no button
+	     and no page load. Applied ONLY in the signed release build: a
+	     restricted entitlement in an ad-hoc binary has no provisioning
+	     profile to authorise it, and macOS can refuse to launch it. Local and
+	     unsigned builds fall back to the vegvisr:// scheme. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:vegvisr.vercel.app</string>
+	</array>
+</dict>
+</plist>

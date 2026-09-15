@@ -22,6 +22,9 @@ struct VegvisrApp: App {
             MarkerProbe.run(to: args[i + 1])
         }
         if args.contains("--curve") { CurveProbe.run() }
+        if let i = args.firstIndex(of: "--sharelink"), i + 1 < args.count {
+            MainActor.assumeIsolated { ShareProbe.run(args[i + 1]) }
+        }
         if let i = args.firstIndex(of: "--lodshot"), i + 2 < args.count {
             LodProbe.run(to: args[i + 1], seed: args[i + 2])
         }
@@ -36,6 +39,9 @@ struct VegvisrApp: App {
             ContentView()
                 .environmentObject(model)
                 .preferredColorScheme(.dark)
+                // Both the vegvisr:// scheme and, once the app is signed for
+                // associated domains, https links to the site itself.
+                .onOpenURL { model.open($0) }
                 #if os(macOS)
                 .frame(minWidth: 900, minHeight: 600)
                 #endif
@@ -283,6 +289,17 @@ final class AppModel: ObservableObject {
         return min(max(d, 6), 16) * 1.6
     }
 
+    /// The camera as the share/link code sees it. `cam` is private to the
+    /// model; this keeps it that way rather than widening it for one feature.
+    var shareCamera: MapCamera { cam }
+
+    /// Jump to a camera and suppress the automatic opening fit, which would
+    /// otherwise replace a shared position with the whole world.
+    func pinCamera(_ c: MapCamera) {
+        didFit = true
+        renderer?.camera = c
+    }
+
     func updateCamera(_ c: MapCamera, _ v: SIMD2<Float>) {
         cam = c
         viewPts = v
@@ -500,3 +517,101 @@ struct PhoneChrome: View {
     }
 }
 #endif
+
+// MARK: - Sharing
+
+/// Where a shared link points, and the domain the app claims for Universal
+/// Links. One constant so the two can never disagree.
+let SHARE_HOST = "vegvisr.vercel.app"
+
+extension AppModel {
+    /// The default marker set as the bitmask the link format uses.
+    static var defaultMarkerMask: UInt32 {
+        POI_KINDS.filter(\.defaultOn).reduce(UInt32(0)) { $0 | (1 << UInt32($1.id)) }
+    }
+
+    /// The current view as a link.
+    ///
+    /// Deliberately an https link to the web build rather than a `vegvisr://`
+    /// one. A share has to work for whoever receives it, and most recipients
+    /// will not have the app — the site shows the same map, and opens the app
+    /// for the people who do have it. A custom scheme in a message is a dead
+    /// link for everyone else.
+    ///
+    /// Parameter names are the web's own permalink format, verbatim, so a
+    /// single link is read by both front ends and by links already in the
+    /// wild. Defaults are omitted for the same reason the web omits them: a
+    /// link someone pastes into a forum post should not wrap.
+    var shareURL: URL {
+        var c = URLComponents()
+        c.scheme = "https"
+        c.host = SHARE_HOST
+        c.path = "/"
+        var q = [URLQueryItem(name: "seed", value: activeSeed)]
+        let cam = shareCamera
+        if cam.cx != 0 || cam.cy != 0 {
+            q.append(.init(name: "at",
+                           value: "\(Int(cam.cx.rounded())),\(Int(cam.cy.rounded()))"))
+        }
+        if cam.zoom != 0 {
+            q.append(.init(name: "z", value: String(format: "%.2f", cam.zoom)))
+        }
+        if mode != .biome { q.append(.init(name: "m", value: "\(mode.rawValue)")) }
+        if palette != .classic { q.append(.init(name: "p", value: "\(palette.rawValue)")) }
+        let mask = enabledKinds.reduce(UInt32(0)) { $0 | (1 << UInt32($1)) }
+        if mask != Self.defaultMarkerMask {
+            q.append(.init(name: "k", value: String(mask, radix: 36)))
+        }
+        if genVersion != 2 { q.append(.init(name: "wgv", value: "\(genVersion)")) }
+        c.queryItems = q
+        return c.url!
+    }
+
+    /// Open a shared link.
+    ///
+    /// Accepts the https form and the `vegvisr://` scheme alike. The scheme
+    /// exists because Universal Links need a signed app with an
+    /// associated-domains entitlement; until then it is the only thing that
+    /// can hand a link to the app, and afterwards it costs nothing to keep.
+    /// Unknown and malformed parameters are ignored rather than rejected, so
+    /// a link written by a newer build still opens something sensible.
+    func open(_ url: URL) {
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        else { return }
+        func value(_ name: String) -> String? {
+            items.first { $0.name == name }?.value
+        }
+
+        if let g = value("wgv"), let v = Int32(g), v > 0 { genVersion = v }
+
+        // Markers and render settings before generate(), so the first frame
+        // after the world lands is already the shared view.
+        if let k = value("k"), let mask = UInt32(k, radix: 36) {
+            enabledKinds = Set(POI_KINDS.map(\.id).filter { mask & (1 << UInt32($0)) != 0 })
+        }
+        if let m = value("m"), let v = Int32(m), let parsed = Mode(rawValue: v) { setMode(parsed) }
+        if let p = value("p"), let v = Int32(p), let parsed = Palette(rawValue: v) {
+            setPalette(parsed)
+        }
+
+        let seed = value("seed")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let seed, !seed.isEmpty, seed != activeSeed {
+            seedText = seed
+            generate()
+        }
+
+        // Camera last. generate() clears the did-fit flag, and the first frame
+        // would otherwise fit the whole world over the position in the link.
+        var target = shareCamera
+        var moved = false
+        if let at = value("at") {
+            let parts = at.split(separator: ",").compactMap { Float($0) }
+            if parts.count == 2 { target.cx = parts[0]; target.cy = parts[1]; moved = true }
+        }
+        if let z = value("z"), let v = Float(z) { target.zoom = v; moved = true }
+        if moved {
+            target.clampCentre()
+            pinCamera(target)
+        }
+    }
+}

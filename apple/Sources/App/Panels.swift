@@ -180,6 +180,34 @@ struct FlatButton: View {
     }
 }
 
+/// Shares the current view as a link.
+///
+/// Styled by hand rather than wrapped around FlatButton because ShareLink
+/// brings its own Button, and nesting one inside another swallows the tap on
+/// macOS.
+struct ShareButton: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        ShareLink(item: model.shareURL) {
+            Text("SHARE")
+                .font(DS.seg.font).tracking(DS.seg.tracking)
+                .foregroundStyle(DS.inkDim)
+                .padding(.vertical, 6).padding(.horizontal, 11)
+                .frame(maxWidth: .infinity)
+                .background(Color.white.opacity(0.001))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(Rectangle().stroke(DS.line, lineWidth: 1))
+        #if os(macOS)
+        .onHover { inside in
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        #endif
+    }
+}
+
 struct KV: View {
     let k: String
     let v: String
@@ -246,7 +274,10 @@ struct RenderPanel: View {
                     current: model.mode) { model.setMode($0) }
                 Seg(options: [("STD", Palette.classic), ("A11Y", Palette.accessible)],
                     current: model.palette) { model.setPalette($0) }
-                FlatButton(title: "FIT") { model.fit() }
+                HStack(spacing: 5) {
+                    FlatButton(title: "FIT") { model.fit() }
+                    ShareButton()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

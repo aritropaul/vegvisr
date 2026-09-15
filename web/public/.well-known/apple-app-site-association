@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["2J3WW2KWBU.dev.aritropaul.vegvisr"],
+        "components": [
+          { "/": "/*", "comment": "every view is a shareable link" }
+        ]
+      }
+    ]
+  }
+}

@@ -106,6 +106,10 @@ jobs:
               CODE_SIGN_IDENTITY="$SIGN_IDENTITY"
               DEVELOPMENT_TEAM="${NOTARY_TEAM_ID:-}"
               ENABLE_HARDENED_RUNTIME=YES
+              # Universal Links. Only on the signed path — an ad-hoc binary
+              # has no provisioning profile to authorise a restricted
+              # entitlement, and macOS can refuse to launch it.
+              CODE_SIGN_ENTITLEMENTS=Vegvisr.entitlements
               OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime --keychain $KEYCHAIN"
             )
           fi
